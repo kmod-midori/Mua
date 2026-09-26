@@ -1,5 +1,7 @@
 package moe.reimu.nekoassistant.ai
 
+import moe.reimu.nekoassistant.ai.tool.Action
+
 import android.util.Log
 import com.aallam.openai.api.chat.ChatCompletionRequest
 import com.aallam.openai.api.chat.ChatMessage

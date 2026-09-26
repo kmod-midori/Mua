@@ -51,7 +51,7 @@ import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import moe.reimu.nekoassistant.ai.Action
+import moe.reimu.nekoassistant.ai.tool.Finish
 import moe.reimu.nekoassistant.ai.AgentMessage
 import moe.reimu.nekoassistant.ai.ExecutorAgent
 import moe.reimu.nekoassistant.ai.createLlmClient
@@ -639,7 +639,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             stateStore.updateAgentMessage(AgentMessage("Executor", executorText))
 
             // Check if we're done
-            if (agentResponse.action is Action.Finish) {
+            if (agentResponse.action is Finish) {
                 Log.i(TAG, "Agent finished")
                 return agentResponse.action.message
             }
