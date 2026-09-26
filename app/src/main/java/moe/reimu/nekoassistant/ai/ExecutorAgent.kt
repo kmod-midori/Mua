@@ -105,7 +105,7 @@ class ExecutorAgent(
             "TakeOver" -> json.decodeFromString(Action.TakeOver.serializer(), call.arguments)
             "Back" -> Action.Back
             "Wait" -> json.decodeFromString(Action.Wait.serializer(), call.arguments)
-            "Finish" -> Action.Finish
+            "Finish" -> json.decodeFromString(Action.Finish.serializer(), call.arguments)
             else -> null
         }
     } catch (e: Exception) {
@@ -191,8 +191,8 @@ class ExecutorAgent(
             ),
             Tool.function(
                 name = "Finish",
-                description = "结束任务，表示准确完整地完成了任务。",
-                parameters = Parameters.Empty,
+                description = "结束任务，表示准确完整地完成了任务。message 为简洁的任务结果总结，将作为完成通知的正文展示给用户。",
+                parameters = obj("message" to "string"),
             ),
         )
     }

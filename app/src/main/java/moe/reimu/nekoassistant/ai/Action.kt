@@ -250,5 +250,5 @@ sealed class Action {
 
     @Serializable
     @SerialName("Finish")
-    data object Finish : Action()
+    data class Finish(val message: String) : Action()
 }

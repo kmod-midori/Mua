@@ -539,7 +539,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         userPrompt: String,
         configuration: ActiveLlmConfiguration,
         client: com.aallam.openai.client.OpenAI,
-    ) {
+    ): String {
         stateStore.addUserMessage(userPrompt)
 
         val plannerAgent = PlannerAgent(
@@ -588,7 +588,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             // Check if we're done
             if (agentResponse.action is Action.Finish) {
                 Log.i(TAG, "Agent finished")
-                return
+                return agentResponse.action.message
             }
 
             val actionResult = agentResponse.action.execute(this)
@@ -627,8 +627,9 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
         currentJob = lifecycleScope.launch(start = CoroutineStart.LAZY) {
             var outcome = TaskOutcome.COMPLETED
+            var completionMessage: String? = null
             try {
-                withContext(Dispatchers.IO) {
+                completionMessage = withContext(Dispatchers.IO) {
                     val configuration = llmConfigurationRepository.activeConfiguration()
                         ?: error("No LLM provider and model are selected")
                     if (!startDisplay()) error("Failed to start display")
@@ -657,7 +658,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                         stateStore.finishTask(retainedApp)
                         if (retainedApp != null) startJobForeground() else stopJobForeground()
                         if (!destroying && !chatVisible) {
-                            val notice = taskEndNotice(outcome, retainedApp?.label)
+                            val notice = taskEndNotice(outcome, retainedApp?.label, completionMessage)
                                 ?: state.value.errorMessage?.takeIf { retainedApp != null }?.let {
                                     TaskNotice("Task failed", it)
                                 }
