@@ -2,13 +2,16 @@
 
 Neko Assistant is an Android application that leverages Shizuku to create virtual displays and control applications with elevated privileges. The app uses Jetpack Compose for UI and AIDL for inter-process communication with a privileged service.
 
-## CRITICAL: Do Not Modify
+## CRITICAL: Modify UserService with Great Caution
 
-**NEVER modify `UserService.kt` under any circumstances.** This file is a Shizuku user service that extends `IUserService.Stub()` and runs with elevated privileges. It has a specific architecture that must not be changed:
-- It extends `IUserService.Stub()` directly (NOT a regular Android Service or LifecycleService)
-- It has special constructors required by Shizuku
-- Any modifications will break the Shizuku integration
-- If you need to make changes to service behavior, ask the user first
+**Changes to `UserService.kt` are allowed when needed, but require great caution.** It runs with elevated privileges in a separate Shizuku process; ordinary Android service assumptions do not apply.
+
+- Keep it extending `IUserService.Stub()` directly. Do not convert it to an Android `Service` or `LifecycleService`.
+- Preserve Shizuku-compatible construction and initialization, including any constructors required by Shizuku.
+- Keep changes narrowly scoped. Review privilege boundaries, Binder threading, resource ownership, and cleanup on disconnect or destruction.
+- Preserve AIDL transaction compatibility and account for Android-version differences in hidden APIs and display flags.
+- Build after changes and perform relevant on-device validation with Shizuku when available. Clearly report behavior that remains unverified.
+- Routine changes within the user's requested scope do not require separate permission solely because they touch `UserService.kt`.
 
 ## Build and Development Commands
 

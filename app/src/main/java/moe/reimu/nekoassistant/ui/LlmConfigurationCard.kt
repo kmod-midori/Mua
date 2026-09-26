@@ -27,7 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,7 +74,7 @@ fun ProviderManagementPage(
     onBack: () -> Unit,
     viewModel: ProviderManagementViewModel = viewModel(),
 ) {
-    val providers by viewModel.providers.collectAsState()
+    val providers by viewModel.providers.collectAsStateWithLifecycle()
     var providerBeingEdited by remember { mutableStateOf<LlmProviderEntity?>(null) }
     var isAddingProvider by remember { mutableStateOf(false) }
     var modelBeingEdited by remember { mutableStateOf<LlmModelEntity?>(null) }

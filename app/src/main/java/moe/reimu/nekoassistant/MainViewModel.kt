@@ -38,6 +38,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prompt = MutableStateFlow("")
     private val repository = LlmConfigurationRepository(application)
     private var bindingRegistered = false
+    private var cleared = false
     private var chatVisible = false
 
     // Switching service instances cancels the old subscription and replays the new snapshot.
@@ -56,6 +57,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            if (cleared) return
             service.value?.setChatVisible(false)
             val connected = (binder as AgentService.LocalBinder).getService()
             service.value = connected
@@ -82,6 +84,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun bindService() {
+        if (cleared || bindingRegistered) return
         bindingRegistered = application.bindService(
             Intent(application, AgentService::class.java), serviceConnection, Context.BIND_AUTO_CREATE,
         )
@@ -92,8 +95,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         service.value = null
         // Unbind even if the initial connection never arrived or subsequently disconnected.
         if (bindingRegistered) {
-            application.unbindService(serviceConnection)
             bindingRegistered = false
+            application.unbindService(serviceConnection)
         }
     }
 
@@ -123,6 +126,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun requestShizukuPermission() { service.value?.requestShizukuPermission() }
 
     override fun onCleared() {
+        cleared = true
         releaseBinding()
         super.onCleared()
     }

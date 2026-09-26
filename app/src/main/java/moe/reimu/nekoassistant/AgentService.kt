@@ -42,6 +42,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import moe.reimu.nekoassistant.ai.Action
 import moe.reimu.nekoassistant.ai.AgentMessage
 import moe.reimu.nekoassistant.ai.ExecutorAgent
@@ -65,7 +68,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private val frames = MutableStateFlow<Bitmap?>(null)
     val previewFrames = frames.asStateFlow()
 
-    @Volatile
     private var currentJob: Job? = null
     private val displayStarted: Boolean get() = state.value.hasDisplay
     @Volatile
@@ -80,8 +82,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         fun getService(): AgentService = this@AgentService
     }
 
-    @Volatile
-    private var userService: IUserService? = null
+    private val userServices = MutableStateFlow<IUserService?>(null)
     private var userServiceBinding = false
 
     val displayMetrics = DisplayMetrics()
@@ -99,7 +100,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         override fun onServiceConnected(p0: ComponentName, p1: IBinder) {
             if (destroying) return
             Log.i(TAG, "UserService onServiceConnected")
-            userService = IUserService.Stub.asInterface(p1)
+            userServices.value = IUserService.Stub.asInterface(p1)
             stateStore.update { it.copy(isUserServiceConnected = true) }
         }
 
@@ -225,7 +226,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 Log.w(TAG, "Failed to unregister user service connection", e)
             }
             userServiceBinding = false
-            userService = null
+            userServices.value = null
             stateStore.update { it.copy(isUserServiceConnected = false) }
         }
     }
@@ -249,15 +250,15 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     private fun disconnectUserService() {
-        userService = null
+        userServices.value = null
         userServiceBinding = false
         stateStore.update { it.copy(isUserServiceConnected = false) }
         if (currentJob != null) {
             notifyError("Shizuku user service disconnected")
-            currentJob?.cancel()
+            currentJob?.cancel(UserServiceDisconnected())
         }
         releaseCapture()
-        stopJobForeground()
+        stopIfIdle()
     }
 
     fun requestShizukuPermission() {
@@ -269,6 +270,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     private fun tryBindUserService() {
+        if (destroying) return
         try {
             val available = Shizuku.pingBinder()
             val granted = available && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
@@ -277,60 +279,63 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             userServiceBinding = true
             Shizuku.bindUserService(userServiceArgs, userServiceConnection)
         } catch (e: Exception) {
+            if (userServiceBinding) {
+                try {
+                    // Shizuku registers the callback before attempting the remote bind.
+                    Shizuku.unbindUserService(userServiceArgs, userServiceConnection, false)
+                } catch (cleanupError: Exception) {
+                    Log.w(TAG, "Failed to unregister failed binding", cleanupError)
+                }
+            }
             userServiceBinding = false
             Log.e(TAG, "Failed to bind user service", e)
             notifyError(e.message ?: "Failed to bind user service")
         }
     }
 
+    private class UserServiceDisconnected : CancellationException("Shizuku user service disconnected")
+
     suspend fun startDisplay(): Boolean {
-        if (displayStarted && userService != null) return true
-        for (i in 0 until 10) {
-            val service = userService
-            if (service == null) {
-                Log.i(TAG, "Waiting for user service to connect... ($i)")
-                delay(1000.milliseconds)
-                continue
-            }
-            val reader = ImageReader.newInstance(
-                displayMetrics.widthPixels,
-                displayMetrics.heightPixels,
-                PixelFormat.RGBA_8888,
-                4,
-                HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
-            )
+        if (displayStarted && userServices.value != null) return true
+        val service = withTimeoutOrNull(10_000) { userServices.filterNotNull().first() }
+            ?: return false
+        val reader = ImageReader.newInstance(
+            displayMetrics.widthPixels,
+            displayMetrics.heightPixels,
+            PixelFormat.RGBA_8888,
+            4,
+            HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
+        )
+        var started = false
+        try {
             synchronized(imageLock) {
-                if (destroying || service !== userService) {
-                    reader.close()
-                    return false
-                }
+                if (destroying || service !== userServices.value) return false
                 imageReader = reader
                 reader.setOnImageAvailableListener(imageListener, frameHandler)
             }
-            if (service.startDisplay(
-                    displayMetrics.widthPixels,
-                    displayMetrics.heightPixels,
-                    displayMetrics.densityDpi,
-                    reader.surface
-            )) {
-                return synchronized(imageLock) {
-                    if (reader !== imageReader || service !== userService || destroying) false else {
-                        stateStore.update { it.copy(hasDisplay = true) }
-                        true
-                    }
+            if (!service.startDisplay(
+                    displayMetrics.widthPixels, displayMetrics.heightPixels,
+                    displayMetrics.densityDpi, reader.surface,
+            )) return false
+            started = synchronized(imageLock) {
+                if (reader !== imageReader || service !== userServices.value || destroying) false else {
+                    stateStore.update { it.copy(hasDisplay = true) }
+                    true
                 }
-            } else {
-                releaseCapture()
-                return false
+            }
+            return started
+        } finally {
+            if (!started) {
+                synchronized(imageLock) {
+                    if (imageReader === reader) releaseCapture() else reader.close()
+                }
             }
         }
-        Log.e(TAG, "User service did not connect in time")
-        return false
     }
 
     fun stopDisplay(): Boolean {
         return try {
-            userService?.stopDisplay() ?: false
+            userServices.value?.stopDisplay() ?: false
         } finally {
             releaseCapture()
         }
@@ -372,7 +377,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     fun startActivityRemote(intent: Intent) {
-        val service = checkNotNull(userService) { "User service is not connected" }
+        val service = checkNotNull(userServices.value) { "User service is not connected" }
         service.startActivity(intent, false)
         intent.component?.packageName?.let { launchedPackages.add(it) }
     }
@@ -403,7 +408,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     fun getFocusedAppName(): String? {
-        val focusedPackageName = userService?.focusedPackageName ?: return null
+        val focusedPackageName = userServices.value?.focusedPackageName ?: return null
         confirmAvailableApp(focusedPackageName)
 
         return try {
@@ -433,7 +438,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         if (destroying) return null
         val app = if (displayStarted) {
             try {
-                userService?.focusedPackageName?.let(::confirmAvailableApp) ?: lastConfirmedApp
+                userServices.value?.focusedPackageName?.let(::confirmAvailableApp) ?: lastConfirmedApp
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to check the background app", e)
                 lastConfirmedApp
@@ -476,7 +481,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         } catch (e: Exception) {
             notifyError(e.message ?: "Failed to close display")
         } finally {
-            stopJobForeground()
+            stopIfIdle()
         }
     }
 
@@ -515,10 +520,10 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     fun injectSwipeEvent(
         x1: Float, y1: Float, x2: Float, y2: Float, duration: Long
-    ) = userService?.injectSwipeEvent(x1, y1, x2, y2, duration) ?: false
+    ) = userServices.value?.injectSwipeEvent(x1, y1, x2, y2, duration) ?: false
 
-    fun injectTapEvent(x: Float, y: Float) = userService?.injectTapEvent(x, y) ?: false
-    fun injectKeyPressEvent(keyCode: Int) = userService?.injectKeyPressEvent(keyCode) ?: false
+    fun injectTapEvent(x: Float, y: Float) = userServices.value?.injectTapEvent(x, y) ?: false
+    fun injectKeyPressEvent(keyCode: Int) = userServices.value?.injectKeyPressEvent(keyCode) ?: false
 
     fun getScreenshotImageUrl(): String? {
         val fullBitmap = getBitmap() ?: return null
@@ -608,6 +613,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
         if (intent == null) {
             Log.w(TAG, "Intent is null, not starting")
+            stopIfIdle()
             return START_NOT_STICKY
         }
 
@@ -622,6 +628,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
         if (agentPrompt == null) {
             Log.w(TAG, "Agent prompt is null or blank, not starting")
+            stopIfIdle()
             return START_NOT_STICKY
         }
 
@@ -629,17 +636,19 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             var outcome = TaskOutcome.COMPLETED
             var completionMessage: String? = null
             try {
+                // Start while the launch is still user-initiated, before binding or network waits.
+                startJobForeground()
+                tryBindUserService()
                 completionMessage = withContext(Dispatchers.IO) {
                     val configuration = llmConfigurationRepository.activeConfiguration()
                         ?: error("No LLM provider and model are selected")
                     if (!startDisplay()) error("Failed to start display")
-                    withContext(Dispatchers.Main) { startJobForeground() }
                     createLlmClient(configuration).use { client ->
                         mainJob(agentPrompt, configuration, client)
                     }
                 }
             } catch (e: CancellationException) {
-                outcome = TaskOutcome.STOPPED
+                outcome = if (e is UserServiceDisconnected) TaskOutcome.FAILED else TaskOutcome.STOPPED
                 throw e
             } catch (e: Exception) {
                 outcome = TaskOutcome.FAILED
@@ -652,11 +661,14 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                     var app: AvailableApp? = null
                     try {
                         app = withContext(Dispatchers.IO) { finishDisplaySession() }
+                    } catch (e: Exception) {
+                        outcome = TaskOutcome.FAILED
+                        if (!destroying) notifyError(e.message ?: "Failed to release task resources")
                     } finally {
                         currentJob = null
                         val retainedApp = app.takeIf { !destroying && displayStarted }
                         stateStore.finishTask(retainedApp)
-                        if (retainedApp != null) startJobForeground() else stopJobForeground()
+                        if (retainedApp != null) startJobForeground() else stopIfIdle()
                         if (!destroying && !chatVisible) {
                             val notice = taskEndNotice(outcome, retainedApp?.label, completionMessage)
                                 ?: state.value.errorMessage?.takeIf { retainedApp != null }?.let {
@@ -685,6 +697,12 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private fun stopJobForeground() {
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun stopIfIdle() {
+        if (destroying || currentJob != null || displayStarted) return
+        stopJobForeground()
+        stopSelf()
     }
 
     private fun ensureForegroundNotificationChannel() {
