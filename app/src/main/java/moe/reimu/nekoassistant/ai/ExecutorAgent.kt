@@ -66,7 +66,6 @@ class ExecutorAgent(
                 ChatMessage(role = ChatRole.User, content = messageContent)
             ),
             tools = tools,
-            toolChoice = ToolChoice.Required,
         )
 
         val streamedText = StringBuilder()
