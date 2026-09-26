@@ -27,9 +27,7 @@ import android.view.Display
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleService
-import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -62,6 +60,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private val binder = LocalBinder()
     private val stateStore = AgentStateStore()
+    private var chatVisible = false
     val state = stateStore.state
     private val frames = MutableStateFlow<Bitmap?>(null)
     val previewFrames = frames.asStateFlow()
@@ -357,10 +356,11 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         // The signal first: a resume landing between the two writes would otherwise find no
         // request to answer and leave the agent waiting on a message the user already saw.
         takeOverResume = resume
-        stateStore.update { it.copy(takeOverMessage = message) }
-        postTakeOverNotification(message)
-
         try {
+            withContext(Dispatchers.Main) {
+                stateStore.update { it.copy(takeOverMessage = message) }
+                if (!chatVisible) postTakeOverNotification(message)
+            }
             resume.await()
         } finally {
             // Also the cancellation path: stopping the agent mid-takeover has to clear the
@@ -563,10 +563,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             val currentApp = getFocusedAppName()
 
             val planResult = plannerAgent.plan(currentScreenshot, currentApp)
-            if (planResult == null) {
-                Log.e(TAG, "Failed to plan")
-                break
-            }
+                ?: error("Failed to plan the next action")
             stateStore.updateAgentMessage(AgentMessage("Planner", planResult))
 
             // Parse action
@@ -591,20 +588,19 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             // Check if we're done
             if (agentResponse.action is Action.Finish) {
                 Log.i(TAG, "Agent finished")
-                break
+                return
             }
 
             val actionResult = agentResponse.action.execute(this)
             Log.i(TAG, "Action result: $actionResult")
             if (actionResult.stop) {
-                Log.i(TAG, "actionResult.stop == true, stopping")
-                break
+                error(actionResult.prompt)
             }
             plannerAgent.addActionResult(agentResponse.action, actionResult.prompt)
             delay(3000.milliseconds) // Wait for the action to take effect and screen to update
         }
 
-        Log.i(TAG, "Agent loop completed")
+        error("Task stopped after reaching the 100-step limit")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -630,6 +626,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
 
         currentJob = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            var outcome = TaskOutcome.COMPLETED
             try {
                 withContext(Dispatchers.IO) {
                     val configuration = llmConfigurationRepository.activeConfiguration()
@@ -641,8 +638,10 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                     }
                 }
             } catch (e: CancellationException) {
+                outcome = TaskOutcome.STOPPED
                 throw e
             } catch (e: Exception) {
+                outcome = TaskOutcome.FAILED
                 Log.e(TAG, "mainJob failed", e)
                 notifyError(e.message ?: "Agent job failed")
             } finally {
@@ -657,12 +656,21 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                         val retainedApp = app.takeIf { !destroying && displayStarted }
                         stateStore.finishTask(retainedApp)
                         if (retainedApp != null) startJobForeground() else stopJobForeground()
+                        if (!destroying && !chatVisible) {
+                            val notice = taskEndNotice(outcome, retainedApp?.label)
+                                ?: state.value.errorMessage?.takeIf { retainedApp != null }?.let {
+                                    TaskNotice("Task failed", it)
+                                }
+                            notice?.let {
+                                postTaskNotification(it.title, it.message)
+                            }
+                        }
                     }
                 }
             }
         }
         stateStore.startTask()
-        getSystemService(NotificationManager::class.java).cancel(ERROR_NOTIFICATION_ID)
+        getSystemService(NotificationManager::class.java).cancel(TASK_RESULT_NOTIFICATION_ID)
         currentJob?.start()
 
         return START_NOT_STICKY
@@ -706,17 +714,31 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             .setContentIntent(openAppPendingIntent())
             .build()
 
-    private fun postErrorNotification(message: String) {
-        ensureForegroundNotificationChannel()
-        val notification = NotificationCompat.Builder(this, FOREGROUND_CHANNEL_ID)
+    private fun postTaskNotification(title: String, message: String) {
+        val manager = getSystemService(NotificationManager::class.java)
+        if (manager.getNotificationChannel(TASK_EVENTS_CHANNEL_ID) == null) {
+            manager.createNotificationChannel(NotificationChannel(
+                TASK_EVENTS_CHANNEL_ID, "Task results", NotificationManager.IMPORTANCE_HIGH,
+            ).apply { description = "Task failures, completion, and stops" })
+        }
+        val retainedDisplay = availableApp != null && !state.value.isAgentRunning
+        val notification = NotificationCompat.Builder(this, TASK_EVENTS_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("NekoAssistant error")
+            .setContentTitle(title)
             .setContentText(message)
-            .setAutoCancel(true)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setAutoCancel(!retainedDisplay)
+            .setOngoing(retainedDisplay)
             .setContentIntent(openAppPendingIntent())
             .build()
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(ERROR_NOTIFICATION_ID, notification)
+        if (retainedDisplay) {
+            // The display still needs a foreground service. Use its existing notification
+            // for the result instead of adding a second entry with the same handoff text.
+            manager.cancel(TASK_RESULT_NOTIFICATION_ID)
+            startForeground(FOREGROUND_NOTIFICATION_ID, notification)
+        } else {
+            manager.notify(TASK_RESULT_NOTIFICATION_ID, notification)
+        }
     }
 
     /**
@@ -771,15 +793,30 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         Log.e(TAG, "Agent error: $message")
         stateStore.update { it.copy(errorMessage = message) }
         lifecycleScope.launch(Dispatchers.Main.immediate) {
-            val foreground = ProcessLifecycleOwner.get()
-                .lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-            if (!foreground || !stateStore.hasSubscribers) postErrorNotification(message)
+            if (!chatVisible) postTaskNotification("Task failed", message)
+        }
+    }
+
+    // Called on main by the chat lifecycle; independent of StateFlow's stop timeout.
+    fun setChatVisible(visible: Boolean) {
+        chatVisible = visible
+        if (chatVisible) {
+            cancelTakeOverNotification()
+            clearTaskResultNotification()
+        }
+    }
+
+    private fun clearTaskResultNotification() {
+        getSystemService(NotificationManager::class.java).cancel(TASK_RESULT_NOTIFICATION_ID)
+        if (availableApp != null && !state.value.isAgentRunning) {
+            // Dismiss the result presentation while retaining the required quiet service entry.
+            startJobForeground()
         }
     }
 
     fun newChat() {
         stateStore.newChat()
-        getSystemService(NotificationManager::class.java).cancel(ERROR_NOTIFICATION_ID)
+        clearTaskResultNotification()
     }
 
     companion object {
@@ -790,7 +827,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         private const val FOREGROUND_CHANNEL_NAME = "Agent job"
         private const val FOREGROUND_CHANNEL_DESCRIPTION = "Runs agent automation tasks"
         private const val FOREGROUND_NOTIFICATION_ID = 1001
-        private const val ERROR_NOTIFICATION_ID = 1002
+        private const val TASK_RESULT_NOTIFICATION_ID = 1002
+        private const val TASK_EVENTS_CHANNEL_ID = "agent_task_results"
         private const val TAKE_OVER_NOTIFICATION_ID = 1003
         private const val TAKE_OVER_CHANNEL_ID = "agent_take_over"
         private const val TAKE_OVER_CHANNEL_NAME = "Agent needs you"

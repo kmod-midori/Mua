@@ -38,6 +38,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val prompt = MutableStateFlow("")
     private val repository = LlmConfigurationRepository(application)
     private var bindingRegistered = false
+    private var chatVisible = false
 
     // Switching service instances cancels the old subscription and replays the new snapshot.
     private val connectedState = service.flatMapLatest { connected ->
@@ -55,10 +56,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            service.value = (binder as AgentService.LocalBinder).getService()
+            service.value?.setChatVisible(false)
+            val connected = (binder as AgentService.LocalBinder).getService()
+            service.value = connected
+            connected.setChatVisible(chatVisible)
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
+            service.value?.setChatVisible(false)
             service.value = null
         }
 
@@ -83,12 +88,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun releaseBinding() {
+        service.value?.setChatVisible(false)
         service.value = null
         // Unbind even if the initial connection never arrived or subsequently disconnected.
         if (bindingRegistered) {
             application.unbindService(serviceConnection)
             bindingRegistered = false
         }
+    }
+
+    fun setChatVisible(visible: Boolean) {
+        chatVisible = visible
+        service.value?.setChatVisible(visible)
     }
 
     fun updateAgentPrompt(value: String) {

@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -96,6 +97,10 @@ fun MainActivityContent() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -> Unit) {
+    LifecycleResumeEffect(mainViewModel) {
+        mainViewModel.setChatVisible(true)
+        onPauseOrDispose { mainViewModel.setChatVisible(false) }
+    }
     val context = LocalContext.current
     val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val notificationPermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

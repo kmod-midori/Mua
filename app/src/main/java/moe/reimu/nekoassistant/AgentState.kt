@@ -27,7 +27,6 @@ data class AgentState(
 internal class AgentStateStore {
     private val mutableState = MutableStateFlow(AgentState())
     val state = mutableState.asStateFlow()
-    val hasSubscribers: Boolean get() = mutableState.subscriptionCount.value > 0
 
     fun update(transform: (AgentState) -> AgentState) = mutableState.update(transform)
 
