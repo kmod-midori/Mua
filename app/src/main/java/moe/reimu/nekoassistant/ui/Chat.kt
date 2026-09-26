@@ -235,6 +235,34 @@ fun TakeOverNotice(message: String, onResume: () -> Unit, modifier: Modifier = M
     }
 }
 
+/** A completed or interrupted task leaves its app available until the user closes it. */
+@Composable
+fun AvailableAppNotice(
+    appName: String,
+    onBringToFront: () -> Unit,
+    onCloseDisplay: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        tonalElevation = 3.dp,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Text("App ready", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "$appName is still available. Bring it to the front to continue.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onBringToFront) { Text("Bring to front") }
+                TextButton(onClick = onCloseDisplay) { Text("Close display") }
+            }
+        }
+    }
+}
+
 /** The "typing…" line: whichever agents are mid-inference, or that one of them failed. */
 @Composable
 fun AgentStatusRow(statuses: Map<String, InferenceStatus>, modifier: Modifier = Modifier) {

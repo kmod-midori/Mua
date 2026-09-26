@@ -39,6 +39,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -63,6 +64,7 @@ import moe.reimu.nekoassistant.ui.LiveScreenPreviewHeight
 import moe.reimu.nekoassistant.ui.ProviderManagementPage
 import moe.reimu.nekoassistant.ui.SelectedLlmConfigurationCard
 import moe.reimu.nekoassistant.ui.TakeOverNotice
+import moe.reimu.nekoassistant.ui.AvailableAppNotice
 import moe.reimu.nekoassistant.ui.theme.NekoAssistantTheme
 import rikka.shizuku.Shizuku
 
@@ -100,6 +102,7 @@ fun MainActivityContent() {
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
 fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -> Unit) {
+    val context = LocalContext.current
     val shizukuStatus = useShizukuStatus()
     val uiState by mainViewModel.uiState.collectAsState()
     val notificationPermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -115,18 +118,22 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, mainViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
+                Lifecycle.Event.ON_START -> mainViewModel.setPreviewActive(true)
+                Lifecycle.Event.ON_STOP -> mainViewModel.setPreviewActive(false)
                 Lifecycle.Event.ON_RESUME -> mainViewModel.setErrorListenerActive(true)
                 Lifecycle.Event.ON_PAUSE -> mainViewModel.setErrorListenerActive(false)
                 else -> {}
             }
         }
 
+        mainViewModel.setPreviewActive(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            mainViewModel.setPreviewActive(false)
         }
     }
 
@@ -180,6 +187,15 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
             Column {
                 uiState.takeOverMessage?.let { message ->
                     TakeOverNotice(message = message, onResume = mainViewModel::resumeAgent)
+                }
+                if (!uiState.isAgentRunning) {
+                    uiState.availableApp?.let { app ->
+                        AvailableAppNotice(
+                            appName = app.label,
+                            onBringToFront = { mainViewModel.bringAppToFront(context) },
+                            onCloseDisplay = mainViewModel::closeRetainedDisplay,
+                        )
+                    }
                 }
                 // Only while something is running: a finished job leaves its last status,
                 // including a failed one, sitting in the map.

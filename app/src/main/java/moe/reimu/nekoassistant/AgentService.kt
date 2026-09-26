@@ -1,9 +1,11 @@
 package moe.reimu.nekoassistant
 
+import android.app.ActivityOptions
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
@@ -16,11 +18,13 @@ import android.media.ImageReader
 import android.os.Binder
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.util.Size
+import android.view.Display
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
@@ -32,6 +36,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -50,12 +55,25 @@ import java.util.Base64
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.time.Duration.Companion.milliseconds
 
+data class AvailableApp(val packageName: String, val label: String)
+
 class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     Shizuku.OnRequestPermissionResultListener {
 
     private val binder = LocalBinder()
 
+    @Volatile
     private var currentJob: Job? = null
+    @Volatile
+    private var displayStarted = false
+    @Volatile
+    private var destroying = false
+    private val launchedPackages = CopyOnWriteArraySet<String>()
+    @Volatile
+    private var lastConfirmedApp: AvailableApp? = null
+    @Volatile
+    private var availableApp: AvailableApp? = null
+    private val availableAppListeners = CopyOnWriteArraySet<AvailableAppListener>()
     private lateinit var llmConfigurationRepository: LlmConfigurationRepository
 
     inner class LocalBinder : Binder() {
@@ -84,6 +102,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         override fun onServiceDisconnected(p0: ComponentName) {
             Log.i(TAG, "UserService onServiceDisconnected")
             userService = null
+            releaseCapture()
+            stopJobForeground()
         }
     }
 
@@ -96,69 +116,77 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private var heldImage: Image? = null
     private var lastPreviewFrameAtMs = 0L
 
-    private val imageListener = ImageReader.OnImageAvailableListener { reader ->
-        val image = reader.acquireNextImage() ?: return@OnImageAvailableListener
+    private val previewHandler = Handler(Looper.getMainLooper())
+    private var latestPreview: Bitmap? = null
 
-        val previewed = try {
-            previewFrame(image)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to preview frame", e)
-            false
-        }
-
+    // Only one delivery is queued, so a busy UI never builds a backlog of frames.
+    private val deliverPreview = Runnable {
         synchronized(imageLock) {
-            if (previewed || previewListeners.isEmpty()) {
-                heldImage?.close()
-                heldImage = image
-            } else {
-                // Skip
-                image.close()
+            previewListeners.forEach { listener ->
+                try {
+                    listener.onPreviewFrame(latestPreview)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Preview listener failed", e)
+                }
             }
         }
     }
 
-    /**
-     * Hands a captured frame to the preview listeners, at most one per
-     * [PREVIEW_FRAME_INTERVAL_MS]. The buffer is already in GPU memory, so the bitmap
-     * references it directly and Compose scales it when drawing — no pixels are copied
-     * and nothing is uploaded.
-     *
-     * Returns whether the frame ends a preview interval, which is what makes the
-     * previously previewed frame safe to release.
-     */
-    private fun previewFrame(image: Image): Boolean {
-        if (previewListeners.isEmpty()) {
-            return false
-        }
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastPreviewFrameAtMs < PREVIEW_FRAME_INTERVAL_MS) {
-            return false
-        }
-        lastPreviewFrameAtMs = now
-
-        val preview = image.hardwareBuffer?.let { buffer ->
-            buffer.use { buffer ->
-                Bitmap.wrapHardwareBuffer(buffer, null)
+    private val renderPreview = Runnable {
+        synchronized(imageLock) {
+            if (previewListeners.isNotEmpty() && heldImage != null) {
+                try {
+                    // Own the pixels: closing an Image permits its producer to reuse its
+                    // buffer even while Compose is still drawing the previous bitmap.
+                    dispatchPreviewFrame(getBitmap())
+                    lastPreviewFrameAtMs = SystemClock.elapsedRealtime()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to preview frame", e)
+                }
             }
         }
-        if (preview == null) {
-            return true
-        }
+    }
 
-        dispatchPreviewFrame(preview)
-        return true
+    private fun schedulePreview() {
+        if (previewListeners.isEmpty() || frameHandler.hasCallbacks(renderPreview)) return
+        val delay = (PREVIEW_FRAME_INTERVAL_MS -
+            (SystemClock.elapsedRealtime() - lastPreviewFrameAtMs)).coerceAtLeast(0L)
+        // Keep a trailing update so the final frame of an animation is also shown.
+        frameHandler.postDelayed(renderPreview, delay)
+    }
+
+    private val imageListener = ImageReader.OnImageAvailableListener { reader ->
+        synchronized(imageLock) {
+            if (reader !== imageReader) return@OnImageAvailableListener
+            val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
+            heldImage?.close()
+            heldImage = image
+            schedulePreview()
+        }
     }
 
     private fun dispatchPreviewFrame(bitmap: Bitmap?) {
-        if (previewListeners.isEmpty()) {
-            return
+        synchronized(imageLock) {
+            latestPreview = bitmap
+            previewHandler.removeCallbacks(deliverPreview)
+            previewHandler.post(deliverPreview)
         }
-        previewListeners.forEach { listener ->
-            try {
-                listener.onPreviewFrame(bitmap)
-            } catch (e: Exception) {
-                Log.w(TAG, "Preview listener failed", e)
-            }
+    }
+
+    private fun releaseCapture() {
+        displayStarted = false
+        launchedPackages.clear()
+        lastConfirmedApp = null
+        setAvailableApp(null)
+        synchronized(imageLock) {
+            frameHandler.removeCallbacks(renderPreview)
+            imageReader?.setOnImageAvailableListener(null, null)
+            heldImage?.close()
+            heldImage = null
+            imageReader?.close()
+            imageReader = null
+            lastPreviewFrameAtMs = 0L
+            dispatchPreviewFrame(null)
         }
     }
 
@@ -180,18 +208,14 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     override fun onDestroy() {
+        destroying = true
         super.onDestroy()
 
         Shizuku.removeBinderReceivedListener(this)
         Shizuku.removeRequestPermissionResultListener(this)
 
         currentJob?.cancel()
-        imageReader?.close()
-        imageReader = null
-        synchronized(imageLock) {
-            heldImage?.close()
-            heldImage = null
-        }
+        releaseCapture()
         frameThread.quitSafely()
         previewListeners.clear()
         transcriptListeners.clear()
@@ -199,6 +223,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         jobStateListeners.clear()
         errorListeners.clear()
         takeOverListeners.clear()
+        availableAppListeners.clear()
         stopJobForeground()
         try {
             userService?.destroy()
@@ -233,6 +258,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     suspend fun startDisplay(): Boolean {
+        if (displayStarted && userService != null) return true
         for (i in 0 until 10) {
             val service = userService
             if (service == null) {
@@ -247,6 +273,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 4,
                 HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
             )
+            synchronized(imageLock) { imageReader = reader }
             reader.setOnImageAvailableListener(imageListener, frameHandler)
             if (service.startDisplay(
                     displayMetrics.widthPixels,
@@ -254,10 +281,10 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                     displayMetrics.densityDpi,
                     reader.surface
             )) {
-                imageReader = reader
+                displayStarted = true
                 return true
             } else {
-                reader.close()
+                releaseCapture()
                 return false
             }
         }
@@ -266,15 +293,11 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     fun stopDisplay(): Boolean {
-        val stopped = userService?.stopDisplay() ?: false
-        imageReader?.close()
-        imageReader = null
-        synchronized(imageLock) {
-            heldImage?.close()
-            heldImage = null
+        return try {
+            userService?.stopDisplay() ?: false
+        } finally {
+            releaseCapture()
         }
-        dispatchPreviewFrame(null)
-        return stopped
     }
 
     fun stopAgent() {
@@ -319,7 +342,9 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     fun startActivityRemote(intent: Intent) {
-        userService?.startActivity(intent, false)
+        val service = checkNotNull(userService) { "User service is not connected" }
+        service.startActivity(intent, false)
+        intent.component?.packageName?.let { launchedPackages.add(it) }
     }
 
     fun getBitmap(): Bitmap? = synchronized(imageLock) {
@@ -336,17 +361,20 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         padded.copyPixelsFromBuffer(plane.buffer)
 
         val cropRect = image.cropRect
-        Bitmap.createBitmap(
+        val cropped = Bitmap.createBitmap(
             padded,
             cropRect.left,
             cropRect.top,
             cropRect.width(),
             cropRect.height()
         )
+        if (cropped !== padded) padded.recycle()
+        cropped
     }
 
     fun getFocusedAppName(): String? {
         val focusedPackageName = userService?.focusedPackageName ?: return null
+        confirmAvailableApp(focusedPackageName)
 
         return try {
             val appInfo = packageManager.getApplicationInfo(focusedPackageName, 0)
@@ -357,6 +385,99 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
+
+    private fun confirmAvailableApp(packageName: String): AvailableApp? {
+        // A launch request alone is insufficient: UserService may have rejected it.
+        if (packageName !in launchedPackages) return null
+        val app = try {
+            val info = packageManager.getApplicationInfo(packageName, 0)
+            AvailableApp(packageName, packageManager.getApplicationLabel(info).toString())
+        } catch (_: PackageManager.NameNotFoundException) {
+            return null
+        }
+        lastConfirmedApp = app
+        return app
+    }
+
+    fun getAvailableApp(): AvailableApp? = availableApp
+
+    private fun setAvailableApp(app: AvailableApp?) {
+        availableApp = app
+        availableAppListeners.forEach { listener ->
+            try {
+                listener.onAvailableAppChanged(app)
+            } catch (e: Exception) {
+                Log.w(TAG, "Available app listener failed", e)
+            }
+        }
+    }
+
+    private fun finishDisplaySession() {
+        if (destroying) return
+        val app = if (displayStarted) {
+            try {
+                userService?.focusedPackageName?.let(::confirmAvailableApp) ?: lastConfirmedApp
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to check the background app", e)
+                lastConfirmedApp
+            }
+        } else null
+        if (app != null) {
+            setAvailableApp(app)
+            // Keep the service alive while the user decides what to do with the display.
+            startJobForeground()
+        } else {
+            try {
+                stopDisplay()
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to stop the empty display", e)
+            }
+            stopJobForeground()
+        }
+    }
+
+    fun bringAppToFront(context: Context) {
+        if (currentJob != null) return
+        val app = availableApp ?: return
+        try {
+            val intent = packageManager.getLaunchIntentForPackage(app.packageName)
+                ?: error("${app.label} can no longer be opened")
+            // Match the existing task without resetting its activity stack.
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            val options = ActivityOptions.makeBasic().apply {
+                launchDisplayId = Display.DEFAULT_DISPLAY
+            }
+            context.startActivity(intent, options.toBundle())
+            // Release only after the foreground launch has returned successfully.
+            closeRetainedDisplay()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to bring app to front", e)
+            notifyError(e.message ?: "Failed to bring app to front")
+        }
+    }
+
+    fun closeRetainedDisplay() {
+        if (currentJob != null || availableApp == null) return
+        try {
+            stopDisplay()
+        } catch (e: Exception) {
+            notifyError(e.message ?: "Failed to close display")
+        } finally {
+            stopJobForeground()
+        }
+    }
+
+    fun interface AvailableAppListener {
+        fun onAvailableAppChanged(app: AvailableApp?)
+    }
+
+    fun addAvailableAppListener(listener: AvailableAppListener) {
+        availableAppListeners.add(listener)
+    }
+
+    fun removeAvailableAppListener(listener: AvailableAppListener) {
+        availableAppListeners.remove(listener)
+    }
 
     fun mapToScreenCoordinates(x: Float, y: Float): Pair<Float, Float>? {
         if (x < 0 || x > screenshotSize.width || y < 0 || y > screenshotSize.height) {
@@ -530,7 +651,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
 
         Log.i(TAG, "Agent loop completed")
-        delay((1000 * 10).milliseconds)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -555,7 +675,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             return START_NOT_STICKY
         }
 
-        currentJob = lifecycleScope.launch(Dispatchers.IO) {
+        setAvailableApp(null)
+        currentJob = lifecycleScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             supervisorScope {
                 try {
                     val configuration = llmConfigurationRepository.activeConfiguration()
@@ -576,16 +697,17 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                     Log.e(TAG, "mainJob failed", e)
                     notifyError(e.message ?: "Agent job failed")
                 } finally {
-                    currentJob = null
-                    notifyJobState(false)
-                    stopJobForeground()
-                    if (!stopDisplay()) {
-                        Log.e(TAG, "Failed to stop display")
+                    try {
+                        finishDisplaySession()
+                    } finally {
+                        currentJob = null
+                        notifyJobState(false)
                     }
                 }
             }
         }
         notifyJobState(true)
+        currentJob?.start()
 
         return START_NOT_STICKY
     }
@@ -620,8 +742,9 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private fun buildForegroundNotification() =
         NotificationCompat.Builder(this, FOREGROUND_CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("NekoAssistant is running")
-            .setContentText("Agent task is in progress")
+            .setContentTitle(if (availableApp != null) "App ready to take over" else "NekoAssistant is running")
+            .setContentText(availableApp?.let { "${it.label} is available. Tap to bring it to the front or close its display." }
+                ?: "Agent task is in progress")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openAppPendingIntent())
@@ -689,11 +812,22 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     fun addPreviewListener(listener: PreviewListener) {
-        previewListeners.add(listener)
+        synchronized(imageLock) {
+            previewListeners.add(listener)
+            dispatchPreviewFrame(latestPreview)
+            schedulePreview()
+        }
     }
 
     fun removePreviewListener(listener: PreviewListener) {
-        previewListeners.remove(listener)
+        synchronized(imageLock) {
+            previewListeners.remove(listener)
+            if (previewListeners.isEmpty()) {
+                frameHandler.removeCallbacks(renderPreview)
+                previewHandler.removeCallbacks(deliverPreview)
+                latestPreview = null
+            }
+        }
     }
 
     fun addTranscriptListener(listener: TranscriptListener) {

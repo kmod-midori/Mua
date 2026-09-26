@@ -31,6 +31,7 @@ data class UiState(
     val inferenceStatuses: Map<String, InferenceStatus> = emptyMap(),
     val errorMessage: String? = null,
     val takeOverMessage: String? = null,
+    val availableApp: AvailableApp? = null,
     val llmProviders: List<LlmProviderWithModels> = emptyList(),
 ) {
     val hasActiveLlmConfiguration: Boolean
@@ -81,9 +82,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateUi { it.copy(takeOverMessage = message) }
     }
 
+    private val availableAppListener = AgentService.AvailableAppListener { app ->
+        updateUi { it.copy(availableApp = app) }
+    }
+
     @SuppressLint("StaticFieldLeak")
     private var agentService: AgentService? = null
     private var errorListenerActive = false
+    private var previewActive = false
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(p0: ComponentName, p1: IBinder) {
@@ -97,6 +103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 messages = service.getTranscript(),
                 inferenceStatuses = service.getInferenceStatuses(),
                 takeOverMessage = service.getTakeOverMessage(),
+                availableApp = service.getAvailableApp(),
             )
             registerServiceListeners(service)
             if (errorListenerActive) {
@@ -113,6 +120,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 inferenceStatuses = emptyMap(),
                 errorMessage = null,
                 takeOverMessage = null,
+                availableApp = null,
             )
         }
     }
@@ -132,11 +140,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun registerServiceListeners(service: AgentService) {
-        service.addPreviewListener(previewListener)
+        if (previewActive) service.addPreviewListener(previewListener)
         service.addTranscriptListener(transcriptListener)
         service.addInferenceStatusListener(inferenceStatusListener)
         service.addJobStateListener(jobStateListener)
         service.addTakeOverListener(takeOverListener)
+        service.addAvailableAppListener(availableAppListener)
     }
 
     private fun removeServiceListeners(service: AgentService) {
@@ -145,6 +154,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         service.removeInferenceStatusListener(inferenceStatusListener)
         service.removeJobStateListener(jobStateListener)
         service.removeTakeOverListener(takeOverListener)
+        service.removeAvailableAppListener(availableAppListener)
     }
 
     fun updateAgentPrompt(prompt: String) {
@@ -174,8 +184,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         agentService?.resumeAgent()
     }
 
+    fun bringAppToFront(context: Context) {
+        agentService?.bringAppToFront(context)
+    }
+
+    fun closeRetainedDisplay() {
+        agentService?.closeRetainedDisplay()
+    }
+
     fun newChat() {
         agentService?.clearTranscript()
+        updateUi { it.copy(errorMessage = null) }
+    }
+
+    fun setPreviewActive(active: Boolean) {
+        previewActive = active
+        if (active) {
+            agentService?.addPreviewListener(previewListener)
+        } else {
+            agentService?.removePreviewListener(previewListener)
+            updateUi { it.copy(previewBitmap = null) }
+        }
     }
 
     fun setErrorListenerActive(active: Boolean) {
