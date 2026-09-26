@@ -1,6 +1,5 @@
 package moe.reimu.nekoassistant
 
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -28,9 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,10 +40,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -66,7 +61,6 @@ import moe.reimu.nekoassistant.ui.SelectedLlmConfigurationCard
 import moe.reimu.nekoassistant.ui.TakeOverNotice
 import moe.reimu.nekoassistant.ui.AvailableAppNotice
 import moe.reimu.nekoassistant.ui.theme.NekoAssistantTheme
-import rikka.shizuku.Shizuku
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,8 +97,7 @@ fun MainActivityContent() {
 @Composable
 fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -> Unit) {
     val context = LocalContext.current
-    val shizukuStatus = useShizukuStatus()
-    val uiState by mainViewModel.uiState.collectAsState()
+    val uiState by mainViewModel.uiState.collectAsStateWithLifecycle()
     val notificationPermissionState = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         rememberPermissionState(
             android.Manifest.permission.POST_NOTIFICATIONS
@@ -114,26 +107,6 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
             override val permission = "NOT_NEEDED"
             override val status = PermissionStatus.Granted
             override fun launchPermissionRequest() {}
-        }
-    }
-
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, mainViewModel) {
-        val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> mainViewModel.setPreviewActive(true)
-                Lifecycle.Event.ON_STOP -> mainViewModel.setPreviewActive(false)
-                Lifecycle.Event.ON_RESUME -> mainViewModel.setErrorListenerActive(true)
-                Lifecycle.Event.ON_PAUSE -> mainViewModel.setErrorListenerActive(false)
-                else -> {}
-            }
-        }
-
-        mainViewModel.setPreviewActive(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            mainViewModel.setPreviewActive(false)
         }
     }
 
@@ -154,9 +127,9 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
                 followTail = info.totalItemsCount == 0 || last?.index == info.totalItemsCount - 1
             }
     }
-    LaunchedEffect(uiState.messages.lastOrNull()?.text, followTail) {
-        if (followTail && uiState.messages.isNotEmpty()) {
-            listState.scrollToItem(uiState.messages.lastIndex)
+    LaunchedEffect(uiState.agent.messages.lastOrNull()?.text, followTail) {
+        if (followTail && uiState.agent.messages.isNotEmpty()) {
+            listState.scrollToItem(uiState.agent.messages.lastIndex)
         }
     }
 
@@ -167,7 +140,7 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
                 actions = {
                     IconButton(
                         onClick = mainViewModel::newChat,
-                        enabled = uiState.messages.isNotEmpty(),
+                        enabled = uiState.agent.messages.isNotEmpty(),
                     ) {
                         Icon(
                             imageVector = Icons.Default.AddComment,
@@ -185,11 +158,11 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
         },
         bottomBar = {
             Column {
-                uiState.takeOverMessage?.let { message ->
+                uiState.agent.takeOverMessage?.let { message ->
                     TakeOverNotice(message = message, onResume = mainViewModel::resumeAgent)
                 }
-                if (!uiState.isAgentRunning) {
-                    uiState.availableApp?.let { app ->
+                if (!uiState.agent.isAgentRunning) {
+                    uiState.agent.availableApp?.let { app ->
                         AvailableAppNotice(
                             appName = app.label,
                             onBringToFront = { mainViewModel.bringAppToFront(context) },
@@ -199,14 +172,14 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
                 }
                 // Only while something is running: a finished job leaves its last status,
                 // including a failed one, sitting in the map.
-                if (uiState.isAgentRunning) {
-                    AgentStatusRow(uiState.inferenceStatuses)
+                if (uiState.agent.isAgentRunning) {
+                    AgentStatusRow(uiState.agent.inferenceStatuses)
                 }
                 ChatInputBar(
                     value = uiState.agentPrompt,
                     onValueChange = mainViewModel::updateAgentPrompt,
-                    isRunning = uiState.isAgentRunning,
-                    canSend = uiState.agentPrompt.isNotBlank() && uiState.hasActiveLlmConfiguration,
+                    isRunning = uiState.agent.isAgentRunning,
+                    canSend = uiState.isServiceConnected && uiState.agentPrompt.isNotBlank() && uiState.hasActiveLlmConfiguration,
                     onSend = mainViewModel::startAgent,
                     onStop = mainViewModel::stopAgent,
                 )
@@ -220,13 +193,14 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 SetupBanners(
-                    shizukuStatus = shizukuStatus,
+                    shizukuStatus = uiState.agent.shizukuStatus,
+                    onRequestShizukuPermission = mainViewModel::requestShizukuPermission,
                     notificationPermissionState = notificationPermissionState,
                     uiState = uiState,
                     onManageProviders = onManageProviders,
                 )
 
-                if (uiState.messages.isEmpty()) {
+                if (uiState.agent.messages.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -253,21 +227,21 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
                             end = 16.dp,
                             top = 16.dp,
                             // Room for the floating preview to sit over.
-                            bottom = if (uiState.previewBitmap != null) {
+                            bottom = if (uiState.agent.hasDisplay) {
                                 LiveScreenPreviewHeight + 32.dp
                             } else {
                                 16.dp
                             },
                         ),
                     ) {
-                        items(uiState.messages) { message ->
+                        items(uiState.agent.messages) { message ->
                             ChatBubble(message)
                         }
                     }
                 }
             }
 
-            uiState.previewBitmap?.let { LiveScreenPreview(it) }
+            PreviewOverlay(mainViewModel)
         }
     }
 }
@@ -277,13 +251,14 @@ fun MainPage(mainViewModel: MainViewModel = viewModel(), onManageProviders: () -
 @Composable
 private fun SetupBanners(
     shizukuStatus: ShizukuStatus,
+    onRequestShizukuPermission: () -> Unit,
     notificationPermissionState: PermissionState,
     uiState: UiState,
     onManageProviders: () -> Unit,
 ) {
     if (shizukuStatus.granted && shizukuStatus.available &&
         notificationPermissionState.status == PermissionStatus.Granted &&
-        uiState.hasActiveLlmConfiguration && uiState.errorMessage == null
+        uiState.hasActiveLlmConfiguration && uiState.agent.errorMessage == null
     ) {
         return
     }
@@ -293,7 +268,7 @@ private fun SetupBanners(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (!shizukuStatus.granted || !shizukuStatus.available) {
-            ShizukuCard(shizukuStatus)
+            ShizukuCard(shizukuStatus, onRequestShizukuPermission)
         }
 
         if (notificationPermissionState.status != PermissionStatus.Granted) {
@@ -314,7 +289,7 @@ private fun SetupBanners(
             )
         }
 
-        uiState.errorMessage?.let { message ->
+        uiState.agent.errorMessage?.let { message ->
             DefaultCard {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
@@ -334,15 +309,9 @@ private fun SetupBanners(
 }
 
 @Composable
-fun ShizukuCard(status: ShizukuStatus) {
+fun ShizukuCard(status: ShizukuStatus, onRequestPermission: () -> Unit) {
     DefaultCard(onClick = {
-        if (!status.granted) {
-            try {
-                Shizuku.requestPermission(0)
-            } catch (e: Throwable) {
-                e.printStackTrace()
-            }
-        }
+        if (!status.granted) onRequestPermission()
     }) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -364,44 +333,11 @@ fun ShizukuCard(status: ShizukuStatus) {
     }
 }
 
-data class ShizukuStatus(val granted: Boolean, val available: Boolean)
-
+/** Frame changes recompose only the preview, not the transcript and composer. */
 @Composable
-fun useShizukuStatus(): ShizukuStatus {
-    var shizukuGranted by remember {
-        mutableStateOf(false)
-    }
-
-    var shizukuAvailable by remember {
-        mutableStateOf(false)
-    }
-
-    DisposableEffect(Unit) {
-        val permissionListener = Shizuku.OnRequestPermissionResultListener { _, grantResult ->
-            shizukuGranted = grantResult == PackageManager.PERMISSION_GRANTED
-        }
-
-        val binderRecvListener = Shizuku.OnBinderReceivedListener {
-            shizukuAvailable = true
-            shizukuGranted = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
-        }
-
-        val binderDeadReceiver = Shizuku.OnBinderDeadListener {
-            shizukuAvailable = false
-        }
-
-        Shizuku.addRequestPermissionResultListener(permissionListener)
-        Shizuku.addBinderReceivedListenerSticky(binderRecvListener)
-        Shizuku.addBinderDeadListener(binderDeadReceiver)
-
-        onDispose {
-            Shizuku.removeRequestPermissionResultListener(permissionListener)
-            Shizuku.removeBinderReceivedListener(binderRecvListener)
-            Shizuku.removeBinderDeadListener(binderDeadReceiver)
-        }
-    }
-
-    return ShizukuStatus(granted = shizukuGranted, available = shizukuAvailable)
+private fun PreviewOverlay(mainViewModel: MainViewModel) {
+    val bitmap by mainViewModel.previewFrames.collectAsStateWithLifecycle(initialValue = null)
+    bitmap?.let { LiveScreenPreview(it) }
 }
 
 @Preview(showBackground = true)

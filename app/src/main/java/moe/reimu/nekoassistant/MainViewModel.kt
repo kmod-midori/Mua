@@ -1,224 +1,118 @@
 package moe.reimu.nekoassistant
 
-import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.Bitmap
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.application
 import androidx.lifecycle.viewModelScope
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import moe.reimu.nekoassistant.ai.ChatMessage
-import moe.reimu.nekoassistant.ai.InferenceStatus
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import moe.reimu.nekoassistant.data.LlmConfigurationRepository
 import moe.reimu.nekoassistant.data.LlmProviderWithModels
 
 data class UiState(
     val isServiceConnected: Boolean = false,
-    val isAgentRunning: Boolean = false,
-    val previewBitmap: Bitmap? = null,
+    val agent: AgentState = AgentState(),
     val agentPrompt: String = "",
-    val messages: List<ChatMessage> = emptyList(),
-    val inferenceStatuses: Map<String, InferenceStatus> = emptyMap(),
-    val errorMessage: String? = null,
-    val takeOverMessage: String? = null,
-    val availableApp: AvailableApp? = null,
     val llmProviders: List<LlmProviderWithModels> = emptyList(),
 ) {
     val hasActiveLlmConfiguration: Boolean
-        get() = llmProviders.any { providerWithModels -> providerWithModels.models.any { it.isSelected } }
+        get() = llmProviders.any { provider -> provider.models.any { it.isSelected } }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val _uiState = MutableStateFlow(UiState())
-    val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+    private val service = MutableStateFlow<AgentService?>(null)
+    private val prompt = MutableStateFlow("")
+    private val repository = LlmConfigurationRepository(application)
+    private var bindingRegistered = false
 
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val llmConfigurationRepository = LlmConfigurationRepository(application)
-
-    private fun updateUi(block: (UiState) -> UiState) {
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            _uiState.value = block(_uiState.value)
-        } else {
-            mainHandler.post { _uiState.value = block(_uiState.value) }
-        }
+    // Switching service instances cancels the old subscription and replays the new snapshot.
+    private val connectedState = service.flatMapLatest { connected ->
+        connected?.state?.map { true to it } ?: flowOf(false to AgentState())
     }
 
-    private val previewListener = AgentService.PreviewListener { bitmap ->
-        updateUi { it.copy(previewBitmap = bitmap) }
-    }
+    val uiState = combine(connectedState, prompt, repository.observeProviders()) { connected, text, providers ->
+        UiState(connected.first, connected.second, text, providers)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
 
-    private val transcriptListener = AgentService.TranscriptListener { messages ->
-        updateUi { it.copy(messages = messages) }
+    // Keep this cold: only a visible preview should subscribe to frame production.
+    val previewFrames: Flow<Bitmap?> = service.flatMapLatest { connected ->
+        connected?.previewFrames ?: flowOf(null)
     }
-
-    private val inferenceStatusListener = AgentService.InferenceStatusListener { agent, status ->
-        updateUi { it.copy(inferenceStatuses = it.inferenceStatuses + (agent to status)) }
-    }
-
-    private val jobStateListener = AgentService.JobStateListener { running ->
-        updateUi {
-            it.copy(
-                isAgentRunning = running,
-                errorMessage = if (running) null else it.errorMessage,
-            )
-        }
-    }
-
-    private val errorListener = AgentService.ErrorListener { message ->
-        updateUi { it.copy(errorMessage = message) }
-    }
-
-    private val takeOverListener = AgentService.TakeOverListener { message ->
-        updateUi { it.copy(takeOverMessage = message) }
-    }
-
-    private val availableAppListener = AgentService.AvailableAppListener { app ->
-        updateUi { it.copy(availableApp = app) }
-    }
-
-    @SuppressLint("StaticFieldLeak")
-    private var agentService: AgentService? = null
-    private var errorListenerActive = false
-    private var previewActive = false
 
     private val serviceConnection = object : ServiceConnection {
-        override fun onServiceConnected(p0: ComponentName, p1: IBinder) {
-            val service = (p1 as AgentService.LocalBinder).getService()
-            agentService = service
-            _uiState.value = _uiState.value.copy(
-                isServiceConnected = true,
-                isAgentRunning = service.isAgentRunning(),
-                // A run may have started before this screen existed, so take whatever the
-                // service has rather than starting from an empty transcript.
-                messages = service.getTranscript(),
-                inferenceStatuses = service.getInferenceStatuses(),
-                takeOverMessage = service.getTakeOverMessage(),
-                availableApp = service.getAvailableApp(),
-            )
-            registerServiceListeners(service)
-            if (errorListenerActive) {
-                service.addErrorListener(errorListener)
-            }
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            service.value = (binder as AgentService.LocalBinder).getService()
         }
 
-        override fun onServiceDisconnected(p0: ComponentName) {
-            agentService = null
-            _uiState.value = _uiState.value.copy(
-                isServiceConnected = false,
-                isAgentRunning = false,
-                previewBitmap = null,
-                inferenceStatuses = emptyMap(),
-                errorMessage = null,
-                takeOverMessage = null,
-                availableApp = null,
-            )
+        override fun onServiceDisconnected(name: ComponentName) {
+            service.value = null
+        }
+
+        override fun onBindingDied(name: ComponentName) {
+            releaseBinding()
+            bindService()
+        }
+
+        override fun onNullBinding(name: ComponentName) {
+            releaseBinding()
         }
     }
 
     init {
-        bindAgentService()
-        viewModelScope.launch {
-            llmConfigurationRepository.observeProviders().collect { providers ->
-                _uiState.value = _uiState.value.copy(llmProviders = providers)
-            }
+        bindService()
+    }
+
+    private fun bindService() {
+        bindingRegistered = application.bindService(
+            Intent(application, AgentService::class.java), serviceConnection, Context.BIND_AUTO_CREATE,
+        )
+    }
+
+    private fun releaseBinding() {
+        service.value = null
+        // Unbind even if the initial connection never arrived or subsequently disconnected.
+        if (bindingRegistered) {
+            application.unbindService(serviceConnection)
+            bindingRegistered = false
         }
     }
 
-    private fun bindAgentService() {
-        val intent = Intent(getApplication(), AgentService::class.java)
-        application.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-    }
-
-    private fun registerServiceListeners(service: AgentService) {
-        if (previewActive) service.addPreviewListener(previewListener)
-        service.addTranscriptListener(transcriptListener)
-        service.addInferenceStatusListener(inferenceStatusListener)
-        service.addJobStateListener(jobStateListener)
-        service.addTakeOverListener(takeOverListener)
-        service.addAvailableAppListener(availableAppListener)
-    }
-
-    private fun removeServiceListeners(service: AgentService) {
-        service.removePreviewListener(previewListener)
-        service.removeTranscriptListener(transcriptListener)
-        service.removeInferenceStatusListener(inferenceStatusListener)
-        service.removeJobStateListener(jobStateListener)
-        service.removeTakeOverListener(takeOverListener)
-        service.removeAvailableAppListener(availableAppListener)
-    }
-
-    fun updateAgentPrompt(prompt: String) {
-        _uiState.value = _uiState.value.copy(agentPrompt = prompt)
+    fun updateAgentPrompt(value: String) {
+        prompt.value = value
     }
 
     fun startAgent() {
-        val prompt = _uiState.value.agentPrompt.trim()
-        if (prompt.isBlank()) {
-            return
-        }
-
-        // The bubble comes back from the service with the rest of the transcript.
-        _uiState.value = _uiState.value.copy(agentPrompt = "")
-
-        val intent = Intent(getApplication(), AgentService::class.java).apply {
-            putExtra(AgentService.EXTRA_AGENT_PROMPT, prompt)
-        }
-        application.startService(intent)
+        val text = prompt.value.trim()
+        if (text.isEmpty() || service.value == null || service.value?.state?.value?.isAgentRunning == true) return
+        application.startService(Intent(application, AgentService::class.java).apply {
+            putExtra(AgentService.EXTRA_AGENT_PROMPT, text)
+        })
+        prompt.value = ""
     }
 
-    fun stopAgent() {
-        agentService?.stopAgent()
-    }
-
-    fun resumeAgent() {
-        agentService?.resumeAgent()
-    }
-
-    fun bringAppToFront(context: Context) {
-        agentService?.bringAppToFront(context)
-    }
-
-    fun closeRetainedDisplay() {
-        agentService?.closeRetainedDisplay()
-    }
-
-    fun newChat() {
-        agentService?.clearTranscript()
-        updateUi { it.copy(errorMessage = null) }
-    }
-
-    fun setPreviewActive(active: Boolean) {
-        previewActive = active
-        if (active) {
-            agentService?.addPreviewListener(previewListener)
-        } else {
-            agentService?.removePreviewListener(previewListener)
-            updateUi { it.copy(previewBitmap = null) }
-        }
-    }
-
-    fun setErrorListenerActive(active: Boolean) {
-        errorListenerActive = active
-        val service = agentService ?: return
-        if (active) service.addErrorListener(errorListener) else service.removeErrorListener(errorListener)
-    }
+    fun stopAgent() { service.value?.stopAgent() }
+    fun resumeAgent() { service.value?.resumeAgent() }
+    fun bringAppToFront(context: Context) { service.value?.bringAppToFront(context) }
+    fun closeRetainedDisplay() { service.value?.closeRetainedDisplay() }
+    fun newChat() { service.value?.newChat() }
+    fun requestShizukuPermission() { service.value?.requestShizukuPermission() }
 
     override fun onCleared() {
-        agentService?.let { removeServiceListeners(it) }
-        agentService?.removeErrorListener(errorListener)
-        if (agentService != null) {
-            application.unbindService(serviceConnection)
-            agentService = null
-        }
+        releaseBinding()
+        super.onCleared()
     }
 }

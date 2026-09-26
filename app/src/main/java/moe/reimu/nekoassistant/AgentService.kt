@@ -18,7 +18,6 @@ import android.media.ImageReader
 import android.os.Binder
 import android.os.Handler
 import android.os.HandlerThread
-import android.os.Looper
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.DisplayMetrics
@@ -39,12 +38,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import moe.reimu.nekoassistant.ai.Action
 import moe.reimu.nekoassistant.ai.AgentMessage
-import moe.reimu.nekoassistant.ai.ChatMessage
 import moe.reimu.nekoassistant.ai.ExecutorAgent
-import moe.reimu.nekoassistant.ai.InferenceStatus
 import moe.reimu.nekoassistant.ai.createLlmClient
 import moe.reimu.nekoassistant.ai.PlannerAgent
 import moe.reimu.nekoassistant.data.ActiveLlmConfiguration
@@ -55,32 +57,33 @@ import java.util.Base64
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.time.Duration.Companion.milliseconds
 
-data class AvailableApp(val packageName: String, val label: String)
-
 class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     Shizuku.OnRequestPermissionResultListener {
 
     private val binder = LocalBinder()
+    private val stateStore = AgentStateStore()
+    val state = stateStore.state
+    private val frames = MutableStateFlow<Bitmap?>(null)
+    val previewFrames = frames.asStateFlow()
 
     @Volatile
     private var currentJob: Job? = null
-    @Volatile
-    private var displayStarted = false
+    private val displayStarted: Boolean get() = state.value.hasDisplay
     @Volatile
     private var destroying = false
     private val launchedPackages = CopyOnWriteArraySet<String>()
     @Volatile
     private var lastConfirmedApp: AvailableApp? = null
-    @Volatile
-    private var availableApp: AvailableApp? = null
-    private val availableAppListeners = CopyOnWriteArraySet<AvailableAppListener>()
+    private val availableApp: AvailableApp? get() = state.value.availableApp
     private lateinit var llmConfigurationRepository: LlmConfigurationRepository
 
     inner class LocalBinder : Binder() {
         fun getService(): AgentService = this@AgentService
     }
 
+    @Volatile
     private var userService: IUserService? = null
+    private var userServiceBinding = false
 
     val displayMetrics = DisplayMetrics()
     var screenshotSize = Size(0, 0)
@@ -95,15 +98,16 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private val userServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(p0: ComponentName, p1: IBinder) {
+            if (destroying) return
             Log.i(TAG, "UserService onServiceConnected")
             userService = IUserService.Stub.asInterface(p1)
+            stateStore.update { it.copy(isUserServiceConnected = true) }
         }
 
         override fun onServiceDisconnected(p0: ComponentName) {
+            if (destroying) return
             Log.i(TAG, "UserService onServiceDisconnected")
-            userService = null
-            releaseCapture()
-            stopJobForeground()
+            disconnectUserService()
         }
     }
 
@@ -116,29 +120,13 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private var heldImage: Image? = null
     private var lastPreviewFrameAtMs = 0L
 
-    private val previewHandler = Handler(Looper.getMainLooper())
-    private var latestPreview: Bitmap? = null
-
-    // Only one delivery is queued, so a busy UI never builds a backlog of frames.
-    private val deliverPreview = Runnable {
-        synchronized(imageLock) {
-            previewListeners.forEach { listener ->
-                try {
-                    listener.onPreviewFrame(latestPreview)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Preview listener failed", e)
-                }
-            }
-        }
-    }
-
     private val renderPreview = Runnable {
         synchronized(imageLock) {
-            if (previewListeners.isNotEmpty() && heldImage != null) {
+            if (frames.subscriptionCount.value > 0 && heldImage != null) {
                 try {
                     // Own the pixels: closing an Image permits its producer to reuse its
                     // buffer even while Compose is still drawing the previous bitmap.
-                    dispatchPreviewFrame(getBitmap())
+                    frames.value = getBitmap()
                     lastPreviewFrameAtMs = SystemClock.elapsedRealtime()
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to preview frame", e)
@@ -148,7 +136,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     private fun schedulePreview() {
-        if (previewListeners.isEmpty() || frameHandler.hasCallbacks(renderPreview)) return
+        if (frames.subscriptionCount.value == 0 || frameHandler.hasCallbacks(renderPreview)) return
         val delay = (PREVIEW_FRAME_INTERVAL_MS -
             (SystemClock.elapsedRealtime() - lastPreviewFrameAtMs)).coerceAtLeast(0L)
         // Keep a trailing update so the final frame of an animation is also shown.
@@ -165,20 +153,11 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
-    private fun dispatchPreviewFrame(bitmap: Bitmap?) {
-        synchronized(imageLock) {
-            latestPreview = bitmap
-            previewHandler.removeCallbacks(deliverPreview)
-            previewHandler.post(deliverPreview)
-        }
-    }
-
     private fun releaseCapture() {
-        displayStarted = false
-        launchedPackages.clear()
-        lastConfirmedApp = null
-        setAvailableApp(null)
         synchronized(imageLock) {
+            stateStore.update { it.copy(hasDisplay = false, availableApp = null) }
+            launchedPackages.clear()
+            lastConfirmedApp = null
             frameHandler.removeCallbacks(renderPreview)
             imageReader?.setOnImageAvailableListener(null, null)
             heldImage?.close()
@@ -186,7 +165,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             imageReader?.close()
             imageReader = null
             lastPreviewFrameAtMs = 0L
-            dispatchPreviewFrame(null)
+            frames.value = null
         }
     }
 
@@ -196,6 +175,17 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
         Shizuku.addBinderReceivedListenerSticky(this)
         Shizuku.addRequestPermissionResultListener(this)
+        Shizuku.addBinderDeadListener(binderDeadListener)
+        lifecycleScope.launch {
+            frames.subscriptionCount.map { it > 0 }.distinctUntilChanged().collect { observed ->
+                synchronized(imageLock) {
+                    if (observed) schedulePreview() else {
+                        frameHandler.removeCallbacks(renderPreview)
+                        frames.value = null
+                    }
+                }
+            }
+        }
 
         val dm = getSystemService(DisplayManager::class.java)
         @Suppress("DEPRECATION")
@@ -204,7 +194,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             displayMetrics.widthPixels,
             displayMetrics.heightPixels
         ).scaleToMaxDimension(1024)
-        println()
     }
 
     override fun onDestroy() {
@@ -213,22 +202,32 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
         Shizuku.removeBinderReceivedListener(this)
         Shizuku.removeRequestPermissionResultListener(this)
+        Shizuku.removeBinderDeadListener(binderDeadListener)
 
         currentJob?.cancel()
         releaseCapture()
         frameThread.quitSafely()
-        previewListeners.clear()
-        transcriptListeners.clear()
-        inferenceStatusListeners.clear()
-        jobStateListeners.clear()
-        errorListeners.clear()
-        takeOverListeners.clear()
-        availableAppListeners.clear()
         stopJobForeground()
+        cancelTakeOverNotification()
         try {
-            userService?.destroy()
+            if (userServiceBinding) {
+                // Remove pending bindings as well as a connected remote service.
+                Shizuku.unbindUserService(userServiceArgs, userServiceConnection, true)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to destroy user service", e)
+        } finally {
+            try {
+                if (userServiceBinding) {
+                    // remove=true stops the remote process; remove=false clears local callbacks.
+                    Shizuku.unbindUserService(userServiceArgs, userServiceConnection, false)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to unregister user service connection", e)
+            }
+            userServiceBinding = false
+            userService = null
+            stateStore.update { it.copy(isUserServiceConnected = false) }
         }
     }
 
@@ -245,15 +244,43 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         tryBindUserService()
     }
 
-    fun tryBindUserService() {
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-            return
-        }
+    private val binderDeadListener = Shizuku.OnBinderDeadListener {
+        stateStore.update { it.copy(shizukuStatus = ShizukuStatus()) }
+        disconnectUserService()
+    }
 
+    private fun disconnectUserService() {
+        userService = null
+        userServiceBinding = false
+        stateStore.update { it.copy(isUserServiceConnected = false) }
+        if (currentJob != null) {
+            notifyError("Shizuku user service disconnected")
+            currentJob?.cancel()
+        }
+        releaseCapture()
+        stopJobForeground()
+    }
+
+    fun requestShizukuPermission() {
         try {
+            Shizuku.requestPermission(0)
+        } catch (e: Exception) {
+            notifyError(e.message ?: "Failed to request Shizuku permission")
+        }
+    }
+
+    private fun tryBindUserService() {
+        try {
+            val available = Shizuku.pingBinder()
+            val granted = available && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            stateStore.update { it.copy(shizukuStatus = ShizukuStatus(granted, available)) }
+            if (!granted || userServiceBinding) return
+            userServiceBinding = true
             Shizuku.bindUserService(userServiceArgs, userServiceConnection)
         } catch (e: Exception) {
+            userServiceBinding = false
             Log.e(TAG, "Failed to bind user service", e)
+            notifyError(e.message ?: "Failed to bind user service")
         }
     }
 
@@ -273,16 +300,26 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 4,
                 HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
             )
-            synchronized(imageLock) { imageReader = reader }
-            reader.setOnImageAvailableListener(imageListener, frameHandler)
+            synchronized(imageLock) {
+                if (destroying || service !== userService) {
+                    reader.close()
+                    return false
+                }
+                imageReader = reader
+                reader.setOnImageAvailableListener(imageListener, frameHandler)
+            }
             if (service.startDisplay(
                     displayMetrics.widthPixels,
                     displayMetrics.heightPixels,
                     displayMetrics.densityDpi,
                     reader.surface
             )) {
-                displayStarted = true
-                return true
+                return synchronized(imageLock) {
+                    if (reader !== imageReader || service !== userService || destroying) false else {
+                        stateStore.update { it.copy(hasDisplay = true) }
+                        true
+                    }
+                }
             } else {
                 releaseCapture()
                 return false
@@ -305,11 +342,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         currentJob?.cancel()
     }
 
-    fun isAgentRunning(): Boolean = currentJob?.isActive == true
-
-    /** What the agent is waiting on the user for, or null while it is not waiting. */
-    fun getTakeOverMessage(): String? = takeOverMessage
-
     fun resumeAgent() {
         Log.i(TAG, "resumeAgent requested")
         takeOverResume?.complete(Unit)
@@ -325,8 +357,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         // The signal first: a resume landing between the two writes would otherwise find no
         // request to answer and leave the agent waiting on a message the user already saw.
         takeOverResume = resume
-        takeOverMessage = message
-        notifyTakeOverListeners(message)
+        stateStore.update { it.copy(takeOverMessage = message) }
         postTakeOverNotification(message)
 
         try {
@@ -334,9 +365,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         } finally {
             // Also the cancellation path: stopping the agent mid-takeover has to clear the
             // request, or the screen keeps asking for something nobody is waiting on.
-            takeOverMessage = null
             takeOverResume = null
-            notifyTakeOverListeners(null)
+            stateStore.update { it.copy(takeOverMessage = null) }
             cancelTakeOverNotification()
         }
     }
@@ -399,21 +429,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         return app
     }
 
-    fun getAvailableApp(): AvailableApp? = availableApp
-
-    private fun setAvailableApp(app: AvailableApp?) {
-        availableApp = app
-        availableAppListeners.forEach { listener ->
-            try {
-                listener.onAvailableAppChanged(app)
-            } catch (e: Exception) {
-                Log.w(TAG, "Available app listener failed", e)
-            }
-        }
-    }
-
-    private fun finishDisplaySession() {
-        if (destroying) return
+    private fun finishDisplaySession(): AvailableApp? {
+        if (destroying) return null
         val app = if (displayStarted) {
             try {
                 userService?.focusedPackageName?.let(::confirmAvailableApp) ?: lastConfirmedApp
@@ -422,18 +439,14 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 lastConfirmedApp
             }
         } else null
-        if (app != null) {
-            setAvailableApp(app)
-            // Keep the service alive while the user decides what to do with the display.
-            startJobForeground()
-        } else {
+        if (app == null) {
             try {
                 stopDisplay()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to stop the empty display", e)
             }
-            stopJobForeground()
         }
+        return app
     }
 
     fun bringAppToFront(context: Context) {
@@ -465,18 +478,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         } finally {
             stopJobForeground()
         }
-    }
-
-    fun interface AvailableAppListener {
-        fun onAvailableAppChanged(app: AvailableApp?)
-    }
-
-    fun addAvailableAppListener(listener: AvailableAppListener) {
-        availableAppListeners.add(listener)
-    }
-
-    fun removeAvailableAppListener(listener: AvailableAppListener) {
-        availableAppListeners.remove(listener)
     }
 
     fun mapToScreenCoordinates(x: Float, y: Float): Pair<Float, Float>? {
@@ -531,75 +532,28 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         return "data:image/jpeg;base64,$bytesBase64"
     }
 
-    fun interface PreviewListener {
-        fun onPreviewFrame(bitmap: Bitmap?)
-    }
-
-    fun interface TranscriptListener {
-        fun onTranscriptChanged(messages: List<ChatMessage>)
-    }
-
-    fun interface InferenceStatusListener {
-        fun onInferenceStatus(agent: String, status: InferenceStatus)
-    }
-
-    fun interface JobStateListener {
-        fun onJobStateChanged(running: Boolean)
-    }
-
-    fun interface ErrorListener {
-        fun onError(message: String)
-    }
-
-    fun interface TakeOverListener {
-        fun onTakeOver(message: String?)
-    }
-
-    private val previewListeners = CopyOnWriteArraySet<PreviewListener>()
-
-    // Written by the agent's coroutine and read by whoever binds, so it is volatile rather
-    // than carried on a listener that only exists while the screen does.
-    @Volatile
-    private var takeOverMessage: String? = null
     @Volatile
     private var takeOverResume: CompletableDeferred<Unit>? = null
-    private val takeOverListeners = CopyOnWriteArraySet<TakeOverListener>()
-
-    // The conversation lives here, not in the screen, so closing the activity mid-run and
-    // reopening it resumes the same transcript.
-    private val transcript = mutableListOf<ChatMessage>()
-    private val transcriptListeners = CopyOnWriteArraySet<TranscriptListener>()
-
-    // What each agent is doing right now, kept here for the same reason: reopening the
-    // screen mid-run should show that an inference is in flight, not an idle chat.
-    private val inferenceStatuses = mutableMapOf<String, InferenceStatus>()
-    private val inferenceStatusListeners = CopyOnWriteArraySet<InferenceStatusListener>()
-    private val jobStateListeners = CopyOnWriteArraySet<JobStateListener>()
-    private val errorListeners = CopyOnWriteArraySet<ErrorListener>()
 
     suspend fun mainJob(
         userPrompt: String,
         configuration: ActiveLlmConfiguration,
         client: com.aallam.openai.client.OpenAI,
     ) {
-        updateTranscript {
-            it.add(
-                ChatMessage("You", userPrompt, System.currentTimeMillis(), fromUser = true)
-            )
-        }
+        stateStore.addUserMessage(userPrompt)
 
         val plannerAgent = PlannerAgent(
             userPrompt, configuration, client,
-            onStatus = { notifyInferenceStatusListeners("Planner", it) },
-            onStream = { notifyAgentMessage(AgentMessage("Planner", it)) },
+            onStatus = { stateStore.updateInferenceStatus("Planner", it) },
+            onStream = { stateStore.updateAgentMessage(AgentMessage("Planner", it)) },
         )
         val executorAgent = ExecutorAgent(
             screenshotSize.width,
             screenshotSize.height,
             configuration,
             client,
-            onStatus = { notifyInferenceStatusListeners("Executor", it) },
-            onStream = { notifyAgentMessage(AgentMessage("Executor", it)) },
+            onStatus = { stateStore.updateInferenceStatus("Executor", it) },
+            onStream = { stateStore.updateAgentMessage(AgentMessage("Executor", it)) },
         )
 
         for (step in 0..<100) {
@@ -613,7 +567,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 Log.e(TAG, "Failed to plan")
                 break
             }
-            notifyAgentMessage(AgentMessage("Planner", planResult))
+            stateStore.updateAgentMessage(AgentMessage("Planner", planResult))
 
             // Parse action
             val agentResponse = executorAgent.execute(
@@ -632,7 +586,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 }
                 append("Action: ${agentResponse.action}")
             }
-            notifyAgentMessage(AgentMessage("Executor", executorText))
+            stateStore.updateAgentMessage(AgentMessage("Executor", executorText))
 
             // Check if we're done
             if (agentResponse.action is Action.Finish) {
@@ -675,38 +629,40 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             return START_NOT_STICKY
         }
 
-        setAvailableApp(null)
-        currentJob = lifecycleScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
-            supervisorScope {
-                try {
+        currentJob = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                withContext(Dispatchers.IO) {
                     val configuration = llmConfigurationRepository.activeConfiguration()
-                    if (configuration == null) {
-                        Log.e(TAG, "No LLM provider and model are selected")
-                        return@supervisorScope
-                    }
-                    if (!startDisplay()) {
-                        throw IllegalStateException("Failed to start display")
-                    }
-                    startJobForeground()
+                        ?: error("No LLM provider and model are selected")
+                    if (!startDisplay()) error("Failed to start display")
+                    withContext(Dispatchers.Main) { startJobForeground() }
                     createLlmClient(configuration).use { client ->
                         mainJob(agentPrompt, configuration, client)
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e(TAG, "mainJob failed", e)
-                    notifyError(e.message ?: "Agent job failed")
-                } finally {
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "mainJob failed", e)
+                notifyError(e.message ?: "Agent job failed")
+            } finally {
+                // Cancellation still retains a successfully launched app. Publish completion
+                // and handoff together, on main, before accepting another task.
+                withContext(NonCancellable) {
+                    var app: AvailableApp? = null
                     try {
-                        finishDisplaySession()
+                        app = withContext(Dispatchers.IO) { finishDisplaySession() }
                     } finally {
                         currentJob = null
-                        notifyJobState(false)
+                        val retainedApp = app.takeIf { !destroying && displayStarted }
+                        stateStore.finishTask(retainedApp)
+                        if (retainedApp != null) startJobForeground() else stopJobForeground()
                     }
                 }
             }
         }
-        notifyJobState(true)
+        stateStore.startTask()
+        getSystemService(NotificationManager::class.java).cancel(ERROR_NOTIFICATION_ID)
         currentJob?.start()
 
         return START_NOT_STICKY
@@ -811,153 +767,19 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         manager.createNotificationChannel(channel)
     }
 
-    fun addPreviewListener(listener: PreviewListener) {
-        synchronized(imageLock) {
-            previewListeners.add(listener)
-            dispatchPreviewFrame(latestPreview)
-            schedulePreview()
-        }
-    }
-
-    fun removePreviewListener(listener: PreviewListener) {
-        synchronized(imageLock) {
-            previewListeners.remove(listener)
-            if (previewListeners.isEmpty()) {
-                frameHandler.removeCallbacks(renderPreview)
-                previewHandler.removeCallbacks(deliverPreview)
-                latestPreview = null
-            }
-        }
-    }
-
-    fun addTranscriptListener(listener: TranscriptListener) {
-        transcriptListeners.add(listener)
-    }
-
-    fun removeTranscriptListener(listener: TranscriptListener) {
-        transcriptListeners.remove(listener)
-    }
-
-    fun addInferenceStatusListener(listener: InferenceStatusListener) {
-        inferenceStatusListeners.add(listener)
-    }
-
-    fun removeInferenceStatusListener(listener: InferenceStatusListener) {
-        inferenceStatusListeners.remove(listener)
-    }
-
-    fun addJobStateListener(listener: JobStateListener) {
-        jobStateListeners.add(listener)
-    }
-
-    fun removeJobStateListener(listener: JobStateListener) {
-        jobStateListeners.remove(listener)
-    }
-
-    fun addErrorListener(listener: ErrorListener) {
-        errorListeners.add(listener)
-    }
-
-    fun removeErrorListener(listener: ErrorListener) {
-        errorListeners.remove(listener)
-    }
-
-    fun addTakeOverListener(listener: TakeOverListener) {
-        takeOverListeners.add(listener)
-    }
-
-    fun removeTakeOverListener(listener: TakeOverListener) {
-        takeOverListeners.remove(listener)
-    }
-
-    private fun notifyTakeOverListeners(message: String?) {
-        takeOverListeners.forEach { listener ->
-            try {
-                listener.onTakeOver(message)
-            } catch (e: Exception) {
-                Log.w(TAG, "Take over listener failed", e)
-            }
-        }
-    }
-
-    private fun notifyJobState(running: Boolean) {
-        jobStateListeners.forEach { listener ->
-            try {
-                listener.onJobStateChanged(running)
-            } catch (e: Exception) {
-                Log.w(TAG, "Job state listener failed", e)
-            }
-        }
-    }
-
     private fun notifyError(message: String) {
         Log.e(TAG, "Agent error: $message")
-        val foreground = ProcessLifecycleOwner.get()
-            .lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-        if (foreground && errorListeners.isNotEmpty()) {
-            errorListeners.forEach { listener ->
-                try {
-                    listener.onError(message)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Error listener failed", e)
-                }
-            }
-        } else {
-            postErrorNotification(message)
+        stateStore.update { it.copy(errorMessage = message) }
+        lifecycleScope.launch(Dispatchers.Main.immediate) {
+            val foreground = ProcessLifecycleOwner.get()
+                .lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (!foreground || !stateStore.hasSubscribers) postErrorNotification(message)
         }
     }
 
-    fun getInferenceStatuses(): Map<String, InferenceStatus> =
-        synchronized(inferenceStatuses) { inferenceStatuses.toMap() }
-
-    private fun notifyInferenceStatusListeners(agent: String, status: InferenceStatus) {
-        synchronized(inferenceStatuses) { inferenceStatuses[agent] = status }
-
-        inferenceStatusListeners.forEach { listener ->
-            try {
-                listener.onInferenceStatus(agent, status)
-            } catch (e: Exception) {
-                Log.w(TAG, "Inference status listener failed", e)
-            }
-        }
-    }
-
-    fun getTranscript(): List<ChatMessage> = synchronized(transcript) { transcript.toList() }
-
-    /**
-     * Adds a turn to the transcript. A turn arrives as many streaming updates followed by
-     * the final text, all under the same sender, so a message from whoever spoke last
-     * replaces their turn; anyone else starts a new one.
-     */
-    private fun notifyAgentMessage(message: AgentMessage) = updateTranscript { messages ->
-        val last = messages.lastOrNull()
-        if (last != null && !last.fromUser && last.sender == message.agent) {
-            // Same turn still streaming: keep when it started, not when it last grew.
-            messages[messages.lastIndex] = ChatMessage(
-                message.agent, message.content, last.timestamp
-            )
-        } else {
-            messages.add(
-                ChatMessage(message.agent, message.content, System.currentTimeMillis())
-            )
-        }
-    }
-
-    fun clearTranscript() = updateTranscript { it.clear() }
-
-    private fun updateTranscript(block: (MutableList<ChatMessage>) -> Unit) {
-        val updated = synchronized(transcript) {
-            block(transcript)
-            transcript.toList()
-        }
-
-        transcriptListeners.forEach { listener ->
-            try {
-                listener.onTranscriptChanged(updated)
-            } catch (e: Exception) {
-                Log.w(TAG, "Transcript listener failed", e)
-            }
-        }
+    fun newChat() {
+        stateStore.newChat()
+        getSystemService(NotificationManager::class.java).cancel(ERROR_NOTIFICATION_ID)
     }
 
     companion object {
