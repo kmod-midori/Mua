@@ -26,7 +26,6 @@ import android.util.Size
 import android.view.Display
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.createBitmap
-import androidx.core.graphics.scale
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
@@ -45,19 +44,29 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import moe.reimu.nekoassistant.ai.Action
 import moe.reimu.nekoassistant.ai.AgentMessage
 import moe.reimu.nekoassistant.ai.ExecutorAgent
 import moe.reimu.nekoassistant.ai.createLlmClient
 import moe.reimu.nekoassistant.ai.PlannerAgent
+import moe.reimu.nekoassistant.data.ConversationRepository
+import moe.reimu.nekoassistant.ai.ChatMessage
+import moe.reimu.nekoassistant.ai.generateConversationTitle
 import moe.reimu.nekoassistant.data.ActiveLlmConfiguration
 import moe.reimu.nekoassistant.data.LlmConfigurationRepository
 import rikka.shizuku.Shizuku
-import java.io.ByteArrayOutputStream
 import java.util.Base64
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.time.Duration.Companion.milliseconds
 
+@OptIn(FlowPreview::class)
 class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     Shizuku.OnRequestPermissionResultListener {
 
@@ -77,6 +86,10 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private var lastConfirmedApp: AvailableApp? = null
     private val availableApp: AvailableApp? get() = state.value.availableApp
     private lateinit var llmConfigurationRepository: LlmConfigurationRepository
+    private lateinit var conversations: ConversationRepository
+    private lateinit var conversationRecovery: Deferred<Unit>
+    private val transcriptPersistence = Mutex()
+    private var persistedMessages: List<ChatMessage> = emptyList()
 
     inner class LocalBinder : Binder() {
         fun getService(): AgentService = this@AgentService
@@ -172,6 +185,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     override fun onCreate() {
         super.onCreate()
         llmConfigurationRepository = LlmConfigurationRepository(this)
+        conversations = ConversationRepository(this)
+        conversationRecovery = lifecycleScope.async(Dispatchers.IO) { conversations.prepareForService() }
 
         Shizuku.addBinderReceivedListenerSticky(this)
         Shizuku.addRequestPermissionResultListener(this)
@@ -293,6 +308,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
+    private class ConversationStorageFailure : CancellationException("Conversation storage failed")
+
     private class UserServiceDisconnected : CancellationException("Shizuku user service disconnected")
 
     suspend fun startDisplay(): Boolean {
@@ -363,10 +380,12 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         takeOverResume = resume
         try {
             withContext(Dispatchers.Main) {
+                state.value.conversationId?.let { conversations.setStatus(it, "paused") }
                 stateStore.update { it.copy(takeOverMessage = message) }
                 if (!chatVisible) postTakeOverNotification(message)
             }
             resume.await()
+            state.value.conversationId?.let { conversations.setStatus(it, "running") }
         } finally {
             // Also the cancellation path: stopping the agent mid-takeover has to clear the
             // request, or the screen keeps asking for something nobody is waiting on.
@@ -474,6 +493,15 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
+    fun forgetConversation(id: String) {
+        if (currentJob != null || state.value.conversationId != id) return
+        closeRetainedDisplay()
+        cancelTakeOverNotification()
+        clearTaskResultNotification()
+        stateStore.update { it.copy(conversationId = null, messages = emptyList(),
+            errorMessage = null, inferenceStatuses = emptyMap(), takeOverMessage = null) }
+    }
+
     fun closeRetainedDisplay() {
         if (currentJob != null || availableApp == null) return
         try {
@@ -525,16 +553,34 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     fun injectTapEvent(x: Float, y: Float) = userServices.value?.injectTapEvent(x, y) ?: false
     fun injectKeyPressEvent(keyCode: Int) = userServices.value?.injectKeyPressEvent(keyCode) ?: false
 
-    fun getScreenshotImageUrl(): String? {
-        val fullBitmap = getBitmap() ?: return null
-        val bitmap = fullBitmap.scale(screenshotSize.width, screenshotSize.height)
+    private suspend fun persistTranscript(conversationId: String) = transcriptPersistence.withLock {
+        // Read inside the lock so a delayed streaming write cannot overwrite a newer step.
+        val messages = state.value.messages
+        val firstChanged = messages.indices.firstOrNull { messages[it] != persistedMessages.getOrNull(it) }
+        if (firstChanged != null) {
+            conversations.saveMessages(conversationId, messages.drop(firstChanged), firstChanged)
+        }
+        persistedMessages = messages
+    }
 
-        val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
-        val bytes = outputStream.toByteArray()
-        val bytesBase64 = Base64.getEncoder().encodeToString(bytes)
-
-        return "data:image/jpeg;base64,$bytesBase64"
+    private suspend fun captureStep(conversationId: String, step: Int): String {
+        val bitmap = withTimeoutOrNull(5_000) {
+            var frame = getBitmap()
+            while (frame == null) {
+                delay(50)
+                frame = getBitmap()
+            }
+            frame
+        } ?: error("No screenshot is available for step $step")
+        try {
+            val (message, modelBytes) = conversations.saveScreenshot(bitmap, screenshotSize, step)
+            stateStore.appendMessage(message)
+            // Persist the screenshot and its place in the transcript before asking either model.
+            persistTranscript(conversationId)
+            return "data:image/jpeg;base64,${Base64.getEncoder().encodeToString(modelBytes)}"
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     @Volatile
@@ -544,11 +590,13 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         userPrompt: String,
         configuration: ActiveLlmConfiguration,
         client: com.aallam.openai.client.OpenAI,
+        conversationId: String,
+        history: List<ChatMessage>,
     ): String {
-        stateStore.addUserMessage(userPrompt)
 
         val plannerAgent = PlannerAgent(
             userPrompt, configuration, client,
+            history = history,
             onStatus = { stateStore.updateInferenceStatus("Planner", it) },
             onStream = { stateStore.updateAgentMessage(AgentMessage("Planner", it)) },
         )
@@ -564,7 +612,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         for (step in 0..<100) {
             Log.i(TAG, "Agent step $step")
 
-            val currentScreenshot = getScreenshotImageUrl()
+            val currentScreenshot = captureStep(conversationId, step + 1)
             val currentApp = getFocusedAppName()
 
             val planResult = plannerAgent.plan(currentScreenshot, currentApp)
@@ -598,9 +646,9 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
             val actionResult = agentResponse.action.execute(this)
             Log.i(TAG, "Action result: $actionResult")
-            if (actionResult.stop) {
-                error(actionResult.prompt)
-            }
+            stateStore.appendMessage(ChatMessage("Action result", actionResult.prompt, System.currentTimeMillis()))
+            persistTranscript(conversationId)
+            if (actionResult.stop) error(actionResult.prompt)
             plannerAgent.addActionResult(agentResponse.action, actionResult.prompt)
             delay(3000.milliseconds) // Wait for the action to take effect and screen to update
         }
@@ -632,7 +680,16 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             return START_NOT_STICKY
         }
 
+        val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID)
+        if (conversationId.isNullOrBlank()) {
+            notifyError("Select a conversation before starting a task")
+            stopIfIdle()
+            return START_NOT_STICKY
+        }
+        val previousConversationId = state.value.conversationId
         currentJob = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            var runStarted = false
+            var persistenceJob: Job? = null
             var outcome = TaskOutcome.COMPLETED
             var completionMessage: String? = null
             try {
@@ -640,15 +697,51 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 startJobForeground()
                 tryBindUserService()
                 completionMessage = withContext(Dispatchers.IO) {
+                    conversationRecovery.await()
+                    if (previousConversationId != conversationId && displayStarted) stopDisplay()
+                    conversations.beginRun(conversationId)
+                    runStarted = true
+                    val history = conversations.messages(conversationId)
+                    stateStore.update { it.copy(messages = history) }
+                    persistedMessages = history
+                    stateStore.addUserMessage(agentPrompt)
+                    persistTranscript(conversationId)
+                    persistenceJob = lifecycleScope.launch(Dispatchers.IO) {
+                        try {
+                            state.map { it.messages }.distinctUntilChanged().sample(500).collect {
+                                persistTranscript(conversationId)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                notifyError("Could not save conversation: ${e.message}")
+                                currentJob?.cancel(ConversationStorageFailure())
+                            }
+                        }
+                    }
                     val configuration = llmConfigurationRepository.activeConfiguration()
                         ?: error("No LLM provider and model are selected")
+                    if (conversations.get(conversationId)?.titleGenerated == false) {
+                        lifecycleScope.launch(Dispatchers.IO) {
+                            try {
+                                generateConversationTitle(configuration, history.firstOrNull { it.fromUser }?.text ?: agentPrompt)?.let {
+                                    conversations.setTitle(conversationId, it)
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Title generation failed; keeping prompt title", e)
+                            }
+                        }
+                    }
                     if (!startDisplay()) error("Failed to start display")
                     createLlmClient(configuration).use { client ->
-                        mainJob(agentPrompt, configuration, client)
+                        mainJob(agentPrompt, configuration, client, conversationId, history)
                     }
                 }
             } catch (e: CancellationException) {
-                outcome = if (e is UserServiceDisconnected) TaskOutcome.FAILED else TaskOutcome.STOPPED
+                outcome = if (e is UserServiceDisconnected || e is ConversationStorageFailure) TaskOutcome.FAILED else TaskOutcome.STOPPED
                 throw e
             } catch (e: Exception) {
                 outcome = TaskOutcome.FAILED
@@ -658,6 +751,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 // Cancellation still retains a successfully launched app. Publish completion
                 // and handoff together, on main, before accepting another task.
                 withContext(NonCancellable) {
+                    persistenceJob?.cancelAndJoin()
                     var app: AvailableApp? = null
                     try {
                         app = withContext(Dispatchers.IO) { finishDisplaySession() }
@@ -665,6 +759,20 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                         outcome = TaskOutcome.FAILED
                         if (!destroying) notifyError(e.message ?: "Failed to release task resources")
                     } finally {
+                        if (runStarted) {
+                            val resultText = completionMessage ?: state.value.errorMessage ?: "Task stopped"
+                            stateStore.appendMessage(ChatMessage(
+                                if (outcome == TaskOutcome.COMPLETED) "Assistant" else "System",
+                                resultText, System.currentTimeMillis(),
+                            ))
+                            try {
+                                conversations.finishRun(conversationId, state.value.messages,
+                                    outcome.name.lowercase(), state.value.errorMessage)
+                            } catch (e: Exception) {
+                                outcome = TaskOutcome.FAILED
+                                notifyError("Could not save conversation: ${e.message}")
+                            }
+                        }
                         currentJob = null
                         val retainedApp = app.takeIf { !destroying && displayStarted }
                         stateStore.finishTask(retainedApp)
@@ -682,7 +790,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 }
             }
         }
-        stateStore.startTask()
+        stateStore.startTask(conversationId)
         getSystemService(NotificationManager::class.java).cancel(TASK_RESULT_NOTIFICATION_ID)
         currentJob?.start()
 
@@ -788,6 +896,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             0,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_CONVERSATION_ID, state.value.conversationId)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -833,14 +942,10 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
-    fun newChat() {
-        stateStore.newChat()
-        clearTaskResultNotification()
-    }
-
     companion object {
         private const val TAG = "AgentService"
         private const val PREVIEW_FRAME_INTERVAL_MS = 33L
+        const val EXTRA_CONVERSATION_ID = "moe.reimu.nekoassistant.extra.CONVERSATION_ID"
         const val EXTRA_AGENT_PROMPT = "moe.reimu.nekoassistant.extra.AGENT_PROMPT"
         private const val FOREGROUND_CHANNEL_ID = "agent_job"
         private const val FOREGROUND_CHANNEL_NAME = "Agent job"

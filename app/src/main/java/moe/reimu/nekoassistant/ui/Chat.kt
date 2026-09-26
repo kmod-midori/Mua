@@ -78,6 +78,10 @@ import kotlin.math.roundToInt
 
 @Composable
 fun ChatBubble(message: ChatMessage, modifier: Modifier = Modifier) {
+    if (message.screenshotPath != null) {
+        ScreenshotMessage(message)
+        return
+    }
     val isUser = message.fromUser
     val context = LocalContext.current
     Column(

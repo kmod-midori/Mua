@@ -10,4 +10,8 @@ data class ChatMessage(
     /** Epoch millis, stamped once when the turn starts and kept across its stream updates. */
     val timestamp: Long,
     val fromUser: Boolean = false,
+    val screenshotPath: String? = null,
+    val imageWidth: Int? = null,
+    val imageHeight: Int? = null,
+    val stepNumber: Int? = null,
 )

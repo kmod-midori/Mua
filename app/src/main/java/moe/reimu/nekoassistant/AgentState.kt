@@ -15,6 +15,7 @@ data class AgentState(
     val shizukuStatus: ShizukuStatus = ShizukuStatus(),
     val isUserServiceConnected: Boolean = false,
     val isAgentRunning: Boolean = false,
+    val conversationId: String? = null,
     val hasDisplay: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
     val inferenceStatuses: Map<String, InferenceStatus> = emptyMap(),
@@ -30,9 +31,11 @@ internal class AgentStateStore {
 
     fun update(transform: (AgentState) -> AgentState) = mutableState.update(transform)
 
-    fun startTask() = update {
+    fun startTask(conversationId: String? = null) = update {
         it.copy(
             isAgentRunning = true,
+            conversationId = conversationId ?: it.conversationId,
+            messages = if (conversationId != null && conversationId != it.conversationId) emptyList() else it.messages,
             errorMessage = null,
             inferenceStatuses = emptyMap(),
             takeOverMessage = null,
@@ -44,9 +47,7 @@ internal class AgentStateStore {
         it.copy(isAgentRunning = false, takeOverMessage = null, availableApp = app)
     }
 
-    fun newChat() = update {
-        it.copy(messages = emptyList(), errorMessage = null)
-    }
+    fun appendMessage(message: ChatMessage) = update { it.copy(messages = it.messages + message) }
 
     fun addUserMessage(prompt: String) {
         val message = ChatMessage("You", prompt, System.currentTimeMillis(), fromUser = true)

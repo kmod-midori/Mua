@@ -19,21 +19,22 @@ class PlannerAgent(
     userPrompt: String,
     private val configuration: ActiveLlmConfiguration,
     private val client: OpenAI,
+    history: List<moe.reimu.nekoassistant.ai.ChatMessage> = emptyList(),
     private val onStatus: (InferenceStatus) -> Unit = {},
     private val onStream: (String) -> Unit = {},
 ) {
     private val chatHistory = mutableListOf(
-        ChatMessage(
-            role = ChatRole.System,
-            content = getPlannerSystemPrompt(
-                LocalDate.now().toString(),
-            )
-        ),
-        ChatMessage(
-            role = ChatRole.User,
-            content = userPrompt
-        )
-    )
+        ChatMessage(role = ChatRole.System, content = getPlannerSystemPrompt(LocalDate.now().toString()))
+    ).apply {
+        // Restore recent textual context without resending historical screenshot payloads.
+        history.filter { it.screenshotPath == null }.takeLast(40).forEach { message ->
+            add(ChatMessage(
+                role = if (message.fromUser) ChatRole.User else ChatRole.Assistant,
+                content = if (message.fromUser) message.text else "${message.sender}: ${message.text}",
+            ))
+        }
+        add(ChatMessage(role = ChatRole.User, content = userPrompt))
+    }
 
     suspend fun plan(screenshotDataUri: String?, currentAppName: String?): String? {
         val textPrompt = """

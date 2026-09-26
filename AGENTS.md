@@ -120,6 +120,10 @@ The `wrappers/` package contains utilities for accessing hidden Android APIs:
 - AIDL interface uses explicit transaction codes for stability
 - Service runs in separate process and must be properly cleaned up
 
+## Database Schema Policy
+
+- Keep database schema versions at 1. Do not increase schema versions or add/generate migrations unless the user explicitly requests it.
+
 ## Development Notes
 
 - When modifying AIDL, rebuild the project to regenerate stub classes

@@ -61,19 +61,6 @@ class AgentStateStoreTest {
     }
 
     @Test
-    fun newChatClearsErrorAndTranscriptWithoutDiscardingRetainedDisplay() {
-        val store = AgentStateStore()
-        store.addUserMessage("Old task")
-        store.update { it.copy(hasDisplay = true, availableApp = app, errorMessage = "Failed") }
-        store.newChat()
-
-        assertTrue(store.state.value.messages.isEmpty())
-        assertNull(store.state.value.errorMessage)
-        assertEquals(app, store.state.value.availableApp)
-        assertTrue(store.state.value.hasDisplay)
-    }
-
-    @Test
     fun streamedReplyReplacesOnlyTheLatestTurnAndPreservesItsTimestamp() {
         val store = AgentStateStore()
         store.addUserMessage("Question")
