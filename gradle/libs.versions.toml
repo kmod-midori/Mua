@@ -17,6 +17,8 @@ room = "2.8.4"
 ksp = "2.3.12"
 
 [libraries]
+termux-shared = { module = "com.termux.termux-app:termux-shared", version = "0.118.0" }
+guava-listenablefuture = { module = "com.google.guava:listenablefuture", version = "9999.0-empty-to-avoid-conflict-with-guava" }
 accompanist-permissions = { module = "com.google.accompanist:accompanist-permissions", version.ref = "accompanistPermissions" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

@@ -23,6 +23,7 @@ class ToolRegistryTest {
             Triple("Back", "{}", Back),
             Triple("Wait", """{"seconds":3}""", Wait(3)),
             Triple("Finish", """{"message":"Done"}""", Finish("Done")),
+            Triple("TermuxShell", """{"command":"pwd","workingDirectory":"~"}""", TermuxShell("pwd", "~")),
         )
 
         assertEquals(calls.map { it.first }, ToolRegistry.definitions.map { it.function.name })

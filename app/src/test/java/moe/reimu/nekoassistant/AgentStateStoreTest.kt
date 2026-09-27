@@ -33,7 +33,9 @@ class AgentStateStoreTest {
         store.addUserMessage("Previous task")
         store.update {
             it.copy(hasDisplay = true, availableApp = app, errorMessage = "Old error",
-                takeOverMessage = "Old request", inferenceStatuses = mapOf("Planner" to InferenceStatus.ERROR))
+                takeOverMessage = "Old request",
+                toolApproval = ToolApprovalRequest("old", ToolApprovalDetails("Run?", "old command")),
+                inferenceStatuses = mapOf("Planner" to InferenceStatus.ERROR))
         }
         store.startTask()
 
@@ -43,6 +45,7 @@ class AgentStateStoreTest {
         assertEquals(1, state.messages.size)
         assertNull(state.errorMessage)
         assertNull(state.takeOverMessage)
+        assertNull(state.toolApproval)
         assertNull(state.availableApp)
         assertTrue(state.inferenceStatuses.isEmpty())
     }

@@ -72,7 +72,7 @@ class MainViewModel(application: Application, private val savedState: SavedState
             inferenceStatuses = emptyMap(),
             errorMessage = if (selected.id == null && connected.second.conversationId == null)
                 connected.second.errorMessage else persisted?.errorMessage,
-            takeOverMessage = null, availableApp = null,
+            takeOverMessage = null, toolApproval = null, availableApp = null,
         )
         UiState(connected.first, agent, local.first, providers, chats, selected.id,
             connected.second.conversationId.takeIf { connected.second.isAgentRunning }
@@ -198,6 +198,9 @@ class MainViewModel(application: Application, private val savedState: SavedState
         it.state.value.conversationId == selectedId.value
     }
     fun stopAgent() { selectedService()?.stopAgent() }
+    fun respondToToolApproval(id: String, approved: Boolean, message: String?) {
+        selectedService()?.respondToToolApproval(id, approved, message)
+    }
     fun resumeAgent() { selectedService()?.resumeAgent() }
     fun bringAppToFront(context: Context) { selectedService()?.bringAppToFront(context) }
     fun closeRetainedDisplay() { selectedService()?.closeRetainedDisplay() }

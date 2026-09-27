@@ -19,12 +19,36 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import moe.reimu.nekoassistant.ToolApprovalDetails
+import moe.reimu.nekoassistant.TermuxCommandRunner
+import com.termux.shared.termux.TermuxConstants
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import moe.reimu.nekoassistant.AgentService
 import moe.reimu.nekoassistant.ai.ActionResult
 
 @Serializable
 sealed class Action {
-    abstract suspend fun execute(service: AgentService): ActionResult
+    open fun approval(): ToolApprovalDetails? = null
+
+    suspend fun execute(service: AgentService): ActionResult {
+        approval()?.let {
+            val response = service.awaitToolApproval(it)
+            if (!response.approved) {
+                return ActionResult.retry(buildString {
+                    append("用户拒绝执行此工具，工具未执行。请尊重该决定，不要通过其他工具执行同一操作。")
+                    response.message?.let { message ->
+                        append("\n用户对下一步的指示：\n")
+                        append(message)
+                    }
+                })
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        return executeApproved(service)
+    }
+
+    protected abstract suspend fun executeApproved(service: AgentService): ActionResult
 }
 
 /** Metadata and argument decoding live beside the action that implements each tool. */
@@ -56,7 +80,7 @@ object ToolRegistry {
     private val json = Json { ignoreUnknownKeys = true }
     private val tools = listOf(
         SearchApp, ListApps, Launch, Tap, Type, Swipe,
-        LongPress, DoubleTap, TakeOver, BackTool, Wait, Finish,
+        LongPress, DoubleTap, TakeOver, BackTool, Wait, Finish, TermuxShell,
     )
     private val toolsByName = tools.associateBy { it.name }
 
@@ -69,7 +93,7 @@ object ToolRegistry {
 @Serializable
 @SerialName("SearchApp")
 data class SearchApp(val query: String) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         if (query.isBlank()) {
             return ActionResult.retry("SearchApp 的 query 不能为空")
         }
@@ -103,7 +127,7 @@ data class SearchApp(val query: String) : Action() {
 @Serializable
 @SerialName("ListApps")
 data class ListApps(val page: Int = 0) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val packageManager = service.packageManager
         // An activity answering the launcher intent is what puts an icon in the launcher,
         // so that is the set of apps a user would call launchable. One entry per package:
@@ -160,7 +184,7 @@ data class ListApps(val page: Int = 0) : Action() {
 @Serializable
 @SerialName("Launch")
 data class Launch(val packageName: String) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val launchIntent = service.packageManager.getLaunchIntentForPackage(packageName)
         return if (launchIntent != null) {
             Log.i(TAG, "Launching app: $packageName")
@@ -186,7 +210,7 @@ data class Launch(val packageName: String) : Action() {
 @Serializable
 @SerialName("Tap")
 data class Tap(val x: Float, val y: Float, val message: String? = null) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val x = service.mapXToScreen(x)
             ?: return ActionResult.retry("X坐标不在范围内，最大值为${service.screenshotSize.width - 1}，请调整")
         val y = service.mapYToScreen(y)
@@ -213,7 +237,7 @@ data class Tap(val x: Float, val y: Float, val message: String? = null) : Action
 @Serializable
 @SerialName("Type")
 data class Type(val text: String) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val cm = service.getSystemService(ClipboardManager::class.java)
         cm.setPrimaryClip(ClipData.newPlainText(null, text))
 
@@ -238,7 +262,7 @@ data class Type(val text: String) : Action() {
 @SerialName("Swipe")
 data class Swipe(val startX: Float, val startY: Float, val endX: Float, val endY: Float) :
     Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val (startX, startY) = service.mapToScreenCoordinates(startX, startY)
             ?: return ActionResult.retry("起始坐标不在范围内，请重试")
         val (endX, endY) = service.mapToScreenCoordinates(endX, endY)
@@ -266,7 +290,7 @@ data class Swipe(val startX: Float, val startY: Float, val endX: Float, val endY
 @Serializable
 @SerialName("LongPress")
 data class LongPress(val x: Int, val y: Int) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val screenX = service.mapXToScreen(x.toFloat())
             ?: return ActionResult.retry("X坐标不在范围内，最大值为${service.screenshotSize.width - 1}，请调整")
         val screenY = service.mapYToScreen(y.toFloat())
@@ -294,7 +318,7 @@ data class LongPress(val x: Int, val y: Int) : Action() {
 @Serializable
 @SerialName("DoubleTap")
 data class DoubleTap(val x: Int, val y: Int) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         val screenX = service.mapXToScreen(x.toFloat())
             ?: return ActionResult.retry("X坐标不在范围内，最大值为${service.screenshotSize.width - 1}，请调整")
         val screenY = service.mapYToScreen(y.toFloat())
@@ -323,7 +347,7 @@ data class DoubleTap(val x: Int, val y: Int) : Action() {
 @Serializable
 @SerialName("TakeOver")
 data class TakeOver(val message: String) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         service.awaitUserTakeOver(message)
         return ActionResult.success("用户已接管完成，请先检查当前界面，再决定下一步操作")
     }
@@ -339,7 +363,7 @@ data class TakeOver(val message: String) : Action() {
 @Serializable
 @SerialName("Back")
 data object Back : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         if (service.injectKeyPressEvent(KeyEvent.KEYCODE_BACK)) {
             return ActionResult.success()
         }
@@ -357,7 +381,7 @@ object BackTool : ToolDefinition<Back>(
 @Serializable
 @SerialName("Wait")
 data class Wait(val seconds: Int) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult {
+    override suspend fun executeApproved(service: AgentService): ActionResult {
         delay((seconds * 1000L).milliseconds)
         return ActionResult.success()
     }
@@ -373,12 +397,39 @@ data class Wait(val seconds: Int) : Action() {
 @Serializable
 @SerialName("Finish")
 data class Finish(val message: String) : Action() {
-    override suspend fun execute(service: AgentService): ActionResult = ActionResult.success()
+    override suspend fun executeApproved(service: AgentService): ActionResult = ActionResult.success()
 
     companion object : ToolDefinition<Finish>(
         name = "Finish",
         description = "结束任务，表示准确完整地完成了任务。message 为简洁的任务结果总结，将作为完成通知的正文展示给用户。",
         parameters = objectParameters("message" to "string"),
         decode = { json, arguments -> json.decodeFromString(Finish.serializer(), arguments) },
+    )
+}
+
+
+@Serializable
+@SerialName("TermuxShell")
+data class TermuxShell(val command: String, val workingDirectory: String) : Action() {
+    override fun approval() = ToolApprovalDetails(
+        title = "Run command in Termux?",
+        details = "Working directory: $workingDirectory\n\n$command\n\n" +
+            "Runs with access to Termux files and installed tools. " +
+            "Stopping the agent stops waiting for results; the command may continue. " +
+            "Termux must have allow-external-apps=true in ~/.termux/termux.properties.",
+        permissions = listOf(TermuxConstants.PERMISSION_RUN_COMMAND),
+    )
+
+    override suspend fun executeApproved(service: AgentService): ActionResult =
+        TermuxCommandRunner.run(service, command, workingDirectory)
+
+    companion object : ToolDefinition<TermuxShell>(
+        name = "TermuxShell",
+        description = "经用户确认后，在 Termux 后台运行 Bash 命令，返回 stdout、stderr 和退出码。" +
+            "command 为命令，workingDirectory 为 Termux 中的绝对路径或 ~。每次使用新 shell。" +
+            "需要已安装并初始化 Termux、授予运行命令权限并启用 allow-external-apps。" +
+            "结果等待最多 120 秒；超时不代表命令已停止，不要盲目重试。不能用于绕过用户拒绝或应用启动限制。",
+        parameters = objectParameters("command" to "string", "workingDirectory" to "string"),
+        decode = { json, arguments -> json.decodeFromString(TermuxShell.serializer(), arguments) },
     )
 }

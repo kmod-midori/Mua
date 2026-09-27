@@ -67,6 +67,7 @@ import moe.reimu.nekoassistant.ui.LiveScreenPreview
 import moe.reimu.nekoassistant.ui.LiveScreenPreviewHeight
 import moe.reimu.nekoassistant.ui.ProviderManagementPage
 import moe.reimu.nekoassistant.ui.SelectedLlmConfigurationCard
+import moe.reimu.nekoassistant.ui.ToolApprovalDialog
 import moe.reimu.nekoassistant.ui.TakeOverNotice
 import moe.reimu.nekoassistant.ui.AvailableAppNotice
 import moe.reimu.nekoassistant.ui.theme.NekoAssistantTheme
@@ -213,6 +214,11 @@ fun MainPage(
                             Text("Return to active chat")
                         }
                     } else {
+                        uiState.agent.toolApproval?.let { request ->
+                            key(request.id) {
+                                ToolApprovalDialog(request, mainViewModel::respondToToolApproval)
+                            }
+                        }
                         uiState.agent.takeOverMessage?.let { message ->
                             TakeOverNotice(message = message, onResume = mainViewModel::resumeAgent)
                         }

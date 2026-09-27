@@ -72,6 +72,9 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private val binder = LocalBinder()
     private val stateStore = AgentStateStore()
+    private val toolApprovals = ToolApprovalGate { request ->
+        stateStore.update { it.copy(toolApproval = request) }
+    }
     private var chatVisible = false
     val state = stateStore.state
     private val frames = MutableStateFlow<Bitmap?>(null)
@@ -362,6 +365,23 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         Log.i(TAG, "stopAgent requested")
         currentJob?.cancel()
     }
+
+    fun respondToToolApproval(id: String, approved: Boolean, message: String?) {
+        toolApprovals.respond(id, approved, message)
+    }
+
+    suspend fun awaitToolApproval(details: ToolApprovalDetails): ToolApprovalResponse =
+        withContext(Dispatchers.Main.immediate) {
+            try {
+                state.value.conversationId?.let { conversations.setStatus(it, "paused") }
+                if (!chatVisible) postTakeOverNotification(details.title)
+                toolApprovals.request(details).also {
+                    state.value.conversationId?.let { id -> conversations.setStatus(id, "running") }
+                }
+            } finally {
+                cancelTakeOverNotification()
+            }
+        }
 
     fun resumeAgent() {
         Log.i(TAG, "resumeAgent requested")
@@ -931,6 +951,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         if (chatVisible) {
             cancelTakeOverNotification()
             clearTaskResultNotification()
+        } else {
+            state.value.toolApproval?.let { postTakeOverNotification(it.details.title) }
         }
     }
 

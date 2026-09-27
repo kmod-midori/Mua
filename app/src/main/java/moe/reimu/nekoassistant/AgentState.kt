@@ -20,6 +20,7 @@ data class AgentState(
     val messages: List<ChatMessage> = emptyList(),
     val inferenceStatuses: Map<String, InferenceStatus> = emptyMap(),
     val errorMessage: String? = null,
+    val toolApproval: ToolApprovalRequest? = null,
     val takeOverMessage: String? = null,
     val availableApp: AvailableApp? = null,
 )
@@ -39,12 +40,13 @@ internal class AgentStateStore {
             errorMessage = null,
             inferenceStatuses = emptyMap(),
             takeOverMessage = null,
+            toolApproval = null,
             availableApp = null,
         )
     }
 
     fun finishTask(app: AvailableApp?) = update {
-        it.copy(isAgentRunning = false, takeOverMessage = null, availableApp = app)
+        it.copy(isAgentRunning = false, takeOverMessage = null, toolApproval = null, availableApp = app)
     }
 
     fun appendMessage(message: ChatMessage) = update { it.copy(messages = it.messages + message) }

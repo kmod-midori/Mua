@@ -52,6 +52,8 @@ kotlin {
 }
 
 dependencies {
+    implementation(libs.termux.shared)
+    implementation(libs.guava.listenablefuture)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.service)
