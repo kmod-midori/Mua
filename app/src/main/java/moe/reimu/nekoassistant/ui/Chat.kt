@@ -184,18 +184,23 @@ fun ChatInputBar(
                 value = value,
                 onValueChange = onValueChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Tell the agent what to do") },
+                placeholder = { Text(if (isRunning) "Add guidance for the next action" else "Tell the agent what to do") },
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp),
             )
+            if (isRunning) {
+                FilledIconButton(onClick = onStop, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Default.Stop, contentDescription = "Stop")
+                }
+            }
             FilledIconButton(
-                onClick = if (isRunning) onStop else onSend,
-                enabled = isRunning || canSend,
+                onClick = onSend,
+                enabled = canSend,
                 modifier = Modifier.size(48.dp),
             ) {
                 Icon(
-                    imageVector = if (isRunning) Icons.Default.Stop else Icons.AutoMirrored.Filled.Send,
-                    contentDescription = if (isRunning) "Stop" else "Send",
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Send",
                 )
             }
         }

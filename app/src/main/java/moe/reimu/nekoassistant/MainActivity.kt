@@ -242,7 +242,7 @@ fun MainPage(
                             value = uiState.agentPrompt,
                             onValueChange = mainViewModel::updateAgentPrompt,
                             isRunning = uiState.agent.isAgentRunning,
-                            canSend = uiState.isServiceConnected && !uiState.isChatOperationPending && uiState.agentPrompt.isNotBlank() && uiState.hasActiveLlmConfiguration,
+                            canSend = (!uiState.agent.isAgentRunning || uiState.agent.isAcceptingMessages) && uiState.isServiceConnected && !uiState.isChatOperationPending && uiState.agentPrompt.isNotBlank() && uiState.hasActiveLlmConfiguration,
                             onSend = mainViewModel::startAgent,
                             onStop = mainViewModel::stopAgent,
                         )

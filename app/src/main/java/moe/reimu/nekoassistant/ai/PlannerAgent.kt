@@ -39,16 +39,22 @@ class PlannerAgent(
         add(ChatMessage(role = ChatRole.User, content = userPrompt))
     }
 
+    fun addUserMessage(message: String) {
+        chatHistory.add(ChatMessage(role = ChatRole.User, content = message))
+    }
+
     suspend fun plan(screenshotDataUri: String?, currentAppName: String?): String? {
         // Refresh capabilities when permissions or installed packages change between steps.
         chatHistory[0] = ChatMessage(
             role = ChatRole.System,
             content = getPlannerSystemPrompt(LocalDate.now().toString(), isTermuxAvailable()),
         )
-        val textPrompt = """
-            === 任务状态信息 ===
-            当前前台应用：$currentAppName
-        """.trimIndent()
+        val textPrompt = buildString {
+            appendLine("请根据任务和历史结果规划下一步。")
+            if (!currentAppName.isNullOrBlank()) {
+                appendLine("当前前台应用：$currentAppName")
+            }
+        }
         val messageContent = mutableListOf<ContentPart>(
             TextPart(textPrompt)
         )

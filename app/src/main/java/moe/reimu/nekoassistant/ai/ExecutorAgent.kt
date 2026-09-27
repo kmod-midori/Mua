@@ -33,13 +33,16 @@ class ExecutorAgent(
         currentAppName: String?
     ): AgentResponse? {
         val termuxAvailable = isTermuxAvailable()
-        val textPrompt = """
-                ## 任务状态信息
-                当前前台应用：$currentAppName
-                屏幕右下角坐标：(${screenshotWidth - 1},${screenshotHeight - 1})
-                ## 任务计划
-                $plan
-            """.trimIndent()
+        val textPrompt = buildString {
+            if (!currentAppName.isNullOrBlank()) {
+                appendLine("当前前台应用：$currentAppName")
+            }
+            if (screenshotDataUri != null) {
+                appendLine("屏幕右下角坐标：(${screenshotWidth - 1},${screenshotHeight - 1})")
+            }
+            appendLine("## 任务计划")
+            append(plan)
+        }
         val messageContent = mutableListOf<ContentPart>(
             TextPart(textPrompt)
         )

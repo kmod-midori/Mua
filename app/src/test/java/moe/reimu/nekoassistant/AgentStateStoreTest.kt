@@ -79,6 +79,25 @@ class AgentStateStoreTest {
     }
 
     @Test
+    fun guidanceDuringStreamingIsPreservedByLaterChunksAndTaskCompletion() {
+        val store = AgentStateStore()
+        store.startTask("chat")
+        store.update { it.copy(isAcceptingMessages = true) }
+        store.updateAgentMessage(AgentMessage("Planner", "Original plan"))
+        store.addUserMessage("Use a different app")
+        store.updateAgentMessage(AgentMessage("Planner", "More output"))
+        store.finishTask(null)
+
+        val messages = store.state.value.messages
+        assertEquals(listOf("Original plan", "Use a different app", "More output"), messages.map { it.text })
+        assertTrue(messages[1].fromUser)
+        assertFalse(store.state.value.isAcceptingMessages)
+        store.startTask("next chat")
+        assertFalse(store.state.value.isAcceptingMessages)
+        assertTrue(store.state.value.messages.isEmpty())
+    }
+
+    @Test
     fun concurrentTranscriptAndStatusUpdatesDoNotOverwriteEachOther() {
         val store = AgentStateStore()
         val executor = Executors.newFixedThreadPool(3)

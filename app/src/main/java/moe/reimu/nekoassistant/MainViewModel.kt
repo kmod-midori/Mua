@@ -172,7 +172,14 @@ class MainViewModel(application: Application, private val savedState: SavedState
     fun startAgent() {
         val text = prompt.value.trim()
         val connected = service.value ?: return
-        if (text.isEmpty() || chatOperationPending.value || connected.state.value.isAgentRunning) return
+        if (text.isEmpty() || chatOperationPending.value || uiState.value.isReadOnly) return
+        if (connected.state.value.isAgentRunning) {
+            if (selectedId.value?.let { connected.sendUserMessage(it, text) } == true) {
+                prompt.value = ""
+                localError.value = null
+            }
+            return
+        }
         chatOperationPending.value = true
         viewModelScope.launch {
             try {

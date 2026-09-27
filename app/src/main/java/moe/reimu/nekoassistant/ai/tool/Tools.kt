@@ -45,6 +45,9 @@ sealed class Action {
             }
         }
         currentCoroutineContext().ensureActive()
+        if (service.hasPendingUserMessages) {
+            return ActionResult.retry("用户发来了新的指示，此工具未执行。请先根据新指示重新规划。")
+        }
         return executeApproved(service)
     }
 

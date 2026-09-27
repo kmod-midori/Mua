@@ -15,6 +15,7 @@ data class AgentState(
     val shizukuStatus: ShizukuStatus = ShizukuStatus(),
     val isUserServiceConnected: Boolean = false,
     val isAgentRunning: Boolean = false,
+    val isAcceptingMessages: Boolean = false,
     val conversationId: String? = null,
     val hasDisplay: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
@@ -35,6 +36,7 @@ internal class AgentStateStore {
     fun startTask(conversationId: String? = null) = update {
         it.copy(
             isAgentRunning = true,
+            isAcceptingMessages = false,
             conversationId = conversationId ?: it.conversationId,
             messages = if (conversationId != null && conversationId != it.conversationId) emptyList() else it.messages,
             errorMessage = null,
@@ -46,7 +48,7 @@ internal class AgentStateStore {
     }
 
     fun finishTask(app: AvailableApp?) = update {
-        it.copy(isAgentRunning = false, takeOverMessage = null, toolApproval = null, availableApp = app)
+        it.copy(isAgentRunning = false, isAcceptingMessages = false, takeOverMessage = null, toolApproval = null, availableApp = app)
     }
 
     fun appendMessage(message: ChatMessage) = update { it.copy(messages = it.messages + message) }

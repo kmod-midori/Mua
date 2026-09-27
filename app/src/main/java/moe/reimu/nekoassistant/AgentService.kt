@@ -63,6 +63,7 @@ import moe.reimu.nekoassistant.data.ActiveLlmConfiguration
 import moe.reimu.nekoassistant.data.LlmConfigurationRepository
 import rikka.shizuku.Shizuku
 import java.util.Base64
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -81,6 +82,18 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     val previewFrames = frames.asStateFlow()
 
     private var currentJob: Job? = null
+    private val pendingUserMessages = ConcurrentLinkedQueue<String>()
+
+    val hasPendingUserMessages: Boolean get() = pendingUserMessages.isNotEmpty()
+
+    fun sendUserMessage(conversationId: String, text: String): Boolean {
+        val message = text.trim()
+        if (message.isEmpty() || !state.value.isAcceptingMessages ||
+            state.value.conversationId != conversationId || currentJob?.isActive != true) return false
+        stateStore.addUserMessage(message)
+        pendingUserMessages.add(message)
+        return true
+    }
     private val displayStarted: Boolean get() = state.value.hasDisplay
     @Volatile
     private var destroying = false
@@ -315,7 +328,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private class UserServiceDisconnected : CancellationException("Shizuku user service disconnected")
 
-    suspend fun startDisplay(): Boolean {
+    private suspend fun startDisplay(): Boolean {
         if (displayStarted && userServices.value != null) return true
         val service = withTimeoutOrNull(10_000) { userServices.filterNotNull().first() }
             ?: return false
@@ -415,7 +428,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
-    fun startActivityRemote(intent: Intent) {
+    suspend fun startActivityRemote(intent: Intent) {
+        check(startDisplay()) { "Failed to start display" }
         val service = checkNotNull(userServices.value) { "User service is not connected" }
         service.startActivity(intent, false)
         intent.component?.packageName?.let { launchedPackages.add(it) }
@@ -447,6 +461,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     fun getFocusedAppName(): String? {
+        if (!displayStarted) return null
         val focusedPackageName = userServices.value?.focusedPackageName ?: return null
         confirmAvailableApp(focusedPackageName)
 
@@ -583,7 +598,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         persistedMessages = messages
     }
 
-    private suspend fun captureStep(conversationId: String, step: Int): String {
+    private suspend fun captureStep(conversationId: String, step: Int): String? {
+        if (!displayStarted) return null
         val bitmap = withTimeoutOrNull(5_000) {
             var frame = getBitmap()
             while (frame == null) {
@@ -634,12 +650,19 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         for (step in 0..<100) {
             Log.i(TAG, "Agent step $step")
 
+            while (true) {
+                val message = pendingUserMessages.poll() ?: break
+                plannerAgent.addUserMessage(message)
+            }
+            persistTranscript(conversationId)
             val currentScreenshot = captureStep(conversationId, step + 1)
             val currentApp = getFocusedAppName()
 
             val planResult = plannerAgent.plan(currentScreenshot, currentApp)
                 ?: error("Failed to plan the next action")
             stateStore.updateAgentMessage(AgentMessage("Planner", planResult))
+
+            if (hasPendingUserMessages) continue
 
             // Parse action
             val agentResponse = executorAgent.execute(
@@ -649,6 +672,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 Log.e(TAG, "Failed to parse agent response, retry")
                 continue
             }
+
+            if (hasPendingUserMessages) continue
 
             Log.i(TAG, "Action: ${agentResponse.action}")
 
@@ -662,6 +687,15 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
             // Check if we're done
             if (agentResponse.action is Finish) {
+                // Serialize completion with UI submissions so an accepted message cannot
+                // be stranded between the last queue check and ending the run.
+                val canFinish = withContext(Dispatchers.Main.immediate) {
+                    if (hasPendingUserMessages) false else {
+                        stateStore.update { it.copy(isAcceptingMessages = false) }
+                        true
+                    }
+                }
+                if (!canFinish) continue
                 Log.i(TAG, "Agent finished")
                 return agentResponse.action.message
             }
@@ -727,6 +761,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                     stateStore.update { it.copy(messages = history) }
                     persistedMessages = history
                     stateStore.addUserMessage(agentPrompt)
+                    stateStore.update { it.copy(isAcceptingMessages = true) }
                     persistTranscript(conversationId)
                     persistenceJob = lifecycleScope.launch(Dispatchers.IO) {
                         try {
@@ -757,7 +792,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                             }
                         }
                     }
-                    if (!startDisplay()) error("Failed to start display")
                     createLlmClient(configuration).use { client ->
                         mainJob(agentPrompt, configuration, client, conversationId, history)
                     }
@@ -770,6 +804,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 Log.e(TAG, "mainJob failed", e)
                 notifyError(e.message ?: "Agent job failed")
             } finally {
+                stateStore.update { it.copy(isAcceptingMessages = false) }
                 // Cancellation still retains a successfully launched app. Publish completion
                 // and handoff together, on main, before accepting another task.
                 withContext(NonCancellable) {
@@ -795,6 +830,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                                 notifyError("Could not save conversation: ${e.message}")
                             }
                         }
+                        pendingUserMessages.clear()
                         currentJob = null
                         val retainedApp = app.takeIf { !destroying && displayStarted }
                         stateStore.finishTask(retainedApp)
