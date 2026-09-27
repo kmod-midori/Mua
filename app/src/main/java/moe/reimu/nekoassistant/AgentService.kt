@@ -617,6 +617,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         val plannerAgent = PlannerAgent(
             userPrompt, configuration, client,
             history = history,
+            isTermuxAvailable = { TermuxCommandRunner.isAvailable(this) },
             onStatus = { stateStore.updateInferenceStatus("Planner", it) },
             onStream = { stateStore.updateAgentMessage(AgentMessage("Planner", it)) },
         )
@@ -625,6 +626,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             screenshotSize.height,
             configuration,
             client,
+            isTermuxAvailable = { TermuxCommandRunner.isAvailable(this) },
             onStatus = { stateStore.updateInferenceStatus("Executor", it) },
             onStream = { stateStore.updateAgentMessage(AgentMessage("Executor", it)) },
         )

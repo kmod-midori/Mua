@@ -23,6 +23,7 @@ class ExecutorAgent(
     private val screenshotHeight: Int,
     private val configuration: ActiveLlmConfiguration,
     private val client: OpenAI,
+    private val isTermuxAvailable: () -> Boolean = { false },
     private val onStatus: (InferenceStatus) -> Unit = {},
     private val onStream: (String) -> Unit = {},
 ) {
@@ -31,6 +32,7 @@ class ExecutorAgent(
         screenshotDataUri: String?,
         currentAppName: String?
     ): AgentResponse? {
+        val termuxAvailable = isTermuxAvailable()
         val textPrompt = """
                 ## 任务状态信息
                 当前前台应用：$currentAppName
@@ -52,12 +54,12 @@ class ExecutorAgent(
                     role = ChatRole.System,
                     content = getSystemPrompt(
                         LocalDate.now().toString(),
-                        screenshotWidth - 1, screenshotHeight - 1
+                        screenshotWidth - 1, screenshotHeight - 1, termuxAvailable
                     )
                 ),
                 ChatMessage(role = ChatRole.User, content = messageContent)
             ),
-            tools = ToolRegistry.definitions,
+            tools = ToolRegistry.definitions(termuxAvailable),
         )
 
         val streamedText = StringBuilder()
@@ -79,13 +81,13 @@ class ExecutorAgent(
         ) ?: return null
 
         val toolCall = message.toolCalls?.firstOrNull() as? ToolCall.Function ?: return null
-        val action = toAction(toolCall.function) ?: return null
+        val action = toAction(toolCall.function, termuxAvailable && isTermuxAvailable()) ?: return null
         val think = (message.messageContent as? TextContent)?.content.orEmpty()
         return AgentResponse(think, action)
     }
 
-    private fun toAction(call: FunctionCall): Action? = try {
-        ToolRegistry.decode(call.name, call.arguments)
+    private fun toAction(call: FunctionCall, termuxAvailable: Boolean): Action? = try {
+        ToolRegistry.decode(call.name, call.arguments, termuxAvailable)
     } catch (e: Exception) {
         Log.e(TAG, "Failed to decode tool call ${call.name}", e)
         null

@@ -67,6 +67,7 @@ import moe.reimu.nekoassistant.ui.LiveScreenPreview
 import moe.reimu.nekoassistant.ui.LiveScreenPreviewHeight
 import moe.reimu.nekoassistant.ui.ProviderManagementPage
 import moe.reimu.nekoassistant.ui.SelectedLlmConfigurationCard
+import moe.reimu.nekoassistant.ui.TermuxSetupNotice
 import moe.reimu.nekoassistant.ui.ToolApprovalDialog
 import moe.reimu.nekoassistant.ui.TakeOverNotice
 import moe.reimu.nekoassistant.ui.AvailableAppNotice
@@ -208,6 +209,7 @@ fun MainPage(
             },
             bottomBar = {
                 Column {
+                    TermuxSetupNotice()
                     if (uiState.isReadOnly) {
                         Text("This chat is read-only while another chat is active.", modifier = Modifier.padding(16.dp))
                         TextButton(onClick = { uiState.activeConversationId?.let(mainViewModel::selectConversation) }) {

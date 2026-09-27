@@ -22,11 +22,12 @@ class PlannerAgent(
     private val configuration: ActiveLlmConfiguration,
     private val client: OpenAI,
     history: List<moe.reimu.nekoassistant.ai.ChatMessage> = emptyList(),
+    private val isTermuxAvailable: () -> Boolean = { false },
     private val onStatus: (InferenceStatus) -> Unit = {},
     private val onStream: (String) -> Unit = {},
 ) {
     private val chatHistory = mutableListOf(
-        ChatMessage(role = ChatRole.System, content = getPlannerSystemPrompt(LocalDate.now().toString()))
+        ChatMessage(role = ChatRole.System, content = getPlannerSystemPrompt(LocalDate.now().toString(), isTermuxAvailable()))
     ).apply {
         // Restore recent textual context without resending historical screenshot payloads.
         history.filter { it.screenshotPath == null }.takeLast(40).forEach { message ->
@@ -39,6 +40,11 @@ class PlannerAgent(
     }
 
     suspend fun plan(screenshotDataUri: String?, currentAppName: String?): String? {
+        // Refresh capabilities when permissions or installed packages change between steps.
+        chatHistory[0] = ChatMessage(
+            role = ChatRole.System,
+            content = getPlannerSystemPrompt(LocalDate.now().toString(), isTermuxAvailable()),
+        )
         val textPrompt = """
             === 任务状态信息 ===
             当前前台应用：$currentAppName

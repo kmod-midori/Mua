@@ -22,9 +22,30 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import moe.reimu.nekoassistant.ai.ActionResult
 
+enum class TermuxAvailability { NOT_INSTALLED, PERMISSION_REQUIRED, READY }
+
 /** Explicit, one-shot callback capabilities correlate results without exporting a receiver. */
 object TermuxCommandRunner {
     private const val MAX_OUTPUT_CHARACTERS = 1_000_000
+    fun availability(context: Context): TermuxAvailability {
+        try {
+            context.packageManager.getPackageInfo(TermuxConstants.TERMUX_PACKAGE_NAME, 0)
+        } catch (_: PackageManager.NameNotFoundException) {
+            return TermuxAvailability.NOT_INSTALLED
+        }
+        return if (context.checkSelfPermission(TermuxConstants.PERMISSION_RUN_COMMAND) ==
+            PackageManager.PERMISSION_GRANTED) TermuxAvailability.READY
+        else TermuxAvailability.PERMISSION_REQUIRED
+    }
+
+    fun isAvailable(context: Context): Boolean = availability(context) == TermuxAvailability.READY
+
+    internal fun resolveWorkingDirectory(path: String): String = when {
+        path == "~" -> TermuxConstants.TERMUX_HOME_DIR_PATH
+        path.startsWith("~/") -> TermuxConstants.TERMUX_HOME_DIR_PATH + path.removePrefix("~")
+        else -> path
+    }
+
     private val pending = ConcurrentHashMap<String, CompletableDeferred<ActionResult>>()
 
     suspend fun run(context: Context, command: String, workingDirectory: String): ActionResult =
@@ -40,13 +61,12 @@ object TermuxCommandRunner {
                 !workingDirectory.startsWith("/")) {
                 return@withContext ActionResult.retry("Termux working directory must be an absolute path, ~, or ~/path.")
             }
-            try {
-                context.packageManager.getPackageInfo(TermuxConstants.TERMUX_PACKAGE_NAME, 0)
-            } catch (_: PackageManager.NameNotFoundException) {
-                return@withContext ActionResult.retry("Install and open Termux to initialize its environment first.")
-            }
-            if (context.checkSelfPermission(TermuxConstants.PERMISSION_RUN_COMMAND) != PackageManager.PERMISSION_GRANTED) {
-                return@withContext ActionResult.retry("Grant NekoAssistant the Run commands in Termux environment permission in Android app settings.")
+            when (availability(context)) {
+                TermuxAvailability.NOT_INSTALLED ->
+                    return@withContext ActionResult.retry("Install and open Termux to initialize its environment first.")
+                TermuxAvailability.PERMISSION_REQUIRED ->
+                    return@withContext ActionResult.retry("Grant NekoAssistant the Run commands in Termux environment permission in Android app settings.")
+                TermuxAvailability.READY -> Unit
             }
 
             val id = UUID.randomUUID().toString()
@@ -65,12 +85,12 @@ object TermuxCommandRunner {
                     setClassName(TermuxConstants.TERMUX_PACKAGE_NAME, TermuxConstants.TERMUX_APP.RUN_COMMAND_SERVICE_NAME)
                     putExtra(RUN_COMMAND_SERVICE.EXTRA_COMMAND_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/bash")
                     putExtra(RUN_COMMAND_SERVICE.EXTRA_ARGUMENTS, arrayOf("-c", command))
-                    putExtra(RUN_COMMAND_SERVICE.EXTRA_WORKDIR, workingDirectory)
+                    putExtra(RUN_COMMAND_SERVICE.EXTRA_WORKDIR, resolveWorkingDirectory(workingDirectory))
                     putExtra(RUN_COMMAND_SERVICE.EXTRA_BACKGROUND, true)
                     putExtra(RUN_COMMAND_SERVICE.EXTRA_PENDING_INTENT, callback)
                 }
                 if (context.startService(intent) == null) {
-                    return@withContext ActionResult.retry("Termux command service is unavailable.")
+                    return@withContext ActionResult.retry("Android could not start the Termux command service. Open Termux and check its background-start/autostart settings (especially on Xiaomi/HyperOS).")
                 }
                 withTimeoutOrNull(120_000) { result.await() }
                     ?: ActionResult.fail("No Termux result within 120 seconds. The command may still be running; do not automatically retry. Check Termux and allow-external-apps=true in ~/.termux/termux.properties.")

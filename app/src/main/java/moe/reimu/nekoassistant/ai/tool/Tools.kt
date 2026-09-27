@@ -84,10 +84,11 @@ object ToolRegistry {
     )
     private val toolsByName = tools.associateBy { it.name }
 
-    val definitions = tools.map { it.definition }
+    fun definitions(termuxAvailable: Boolean = false) =
+        tools.filter { termuxAvailable || it !== TermuxShell }.map { it.definition }
 
-    fun decode(name: String, arguments: String): Action? =
-        toolsByName[name]?.decode(json, arguments)
+    fun decode(name: String, arguments: String, termuxAvailable: Boolean = false): Action? =
+        toolsByName[name]?.takeIf { termuxAvailable || it !== TermuxShell }?.decode(json, arguments)
 }
 
 @Serializable

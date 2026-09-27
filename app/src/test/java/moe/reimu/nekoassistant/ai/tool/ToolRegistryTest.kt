@@ -26,10 +26,20 @@ class ToolRegistryTest {
             Triple("TermuxShell", """{"command":"pwd","workingDirectory":"~"}""", TermuxShell("pwd", "~")),
         )
 
-        assertEquals(calls.map { it.first }, ToolRegistry.definitions.map { it.function.name })
+        assertEquals(calls.map { it.first }, ToolRegistry.definitions(termuxAvailable = true).map { it.function.name })
         calls.forEach { (name, arguments, expected) ->
-            assertEquals(name, expected, ToolRegistry.decode(name, arguments))
+            assertEquals(name, expected, ToolRegistry.decode(name, arguments, termuxAvailable = true))
         }
+    }
+
+    @Test
+    fun unavailableTermuxIsNeitherAdvertisedNorDecoded() {
+        assertEquals(
+            ToolRegistry.definitions(true).filter { it.function.name != "TermuxShell" },
+            ToolRegistry.definitions(false),
+        )
+        assertNull(ToolRegistry.decode("TermuxShell", """{"command":"pwd","workingDirectory":"~"}"""))
+        assertEquals(Back, ToolRegistry.decode("Back", "{}"))
     }
 
     @Test
