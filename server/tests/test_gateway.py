@@ -370,3 +370,9 @@ def test_direct_dispatch_preserves_extra_arguments(client):
         assert request["arguments"] == {"displayId": 0, "extra": "unchanged"}
         socket.send_json({"type": "result", "id": request["id"], "result": {"content": []}})
         assert not response.result(timeout=5)["isError"]
+
+
+def test_read_only_hints(client):
+    read_only = {"devices_list", "apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot"}
+    for tool in tool_list(client):
+        assert (tool.get("annotations") or {}).get("readOnlyHint", False) == (tool["name"] in read_only)

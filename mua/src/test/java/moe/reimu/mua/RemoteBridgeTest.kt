@@ -34,6 +34,10 @@ class RemoteBridgeTest {
                         assertEquals("Test phone", hello["name"]?.jsonPrimitive?.content)
                         assertEquals(ToolCatalog.specs.size, hello["tools"]?.jsonArray?.size)
                         hello.getValue("tools").jsonArray.forEach { tool ->
+                            val name = tool.jsonObject.getValue("name").jsonPrimitive.content
+                            val readOnly = setOf("apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot")
+                            val hint = tool.jsonObject["annotations"]?.jsonObject?.get("readOnlyHint")?.jsonPrimitive?.booleanOrNull ?: false
+                            assertEquals(name, name in readOnly, hint)
                             assertEquals("object", tool.jsonObject.getValue("inputSchema").jsonObject["type"]?.jsonPrimitive?.content)
                         }
                         send("""{"type":"ready","version":1}""")

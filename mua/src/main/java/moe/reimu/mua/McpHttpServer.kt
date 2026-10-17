@@ -38,7 +38,8 @@ internal class McpHttpServer(
         options = ServerOptions(capabilities = ServerCapabilities(tools = ServerCapabilities.Tools())),
     ).apply {
         ToolCatalog.specs.forEach { spec ->
-            addTool(name = spec.name, description = spec.description, inputSchema = spec.schema()) { request ->
+            addTool(name = spec.name, description = spec.description, inputSchema = spec.schema(),
+                toolAnnotations = spec.annotations) { request ->
                 try {
                     val args = request.arguments ?: JsonObject(emptyMap())
                     spec.validate(args)

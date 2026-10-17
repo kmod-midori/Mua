@@ -2,12 +2,13 @@ package moe.reimu.mua
 
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.TextContent
+import io.modelcontextprotocol.kotlin.sdk.types.ToolAnnotations
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import kotlinx.serialization.json.*
 
 internal fun textContent(text: String) = CallToolResult(content = listOf(TextContent(text)))
 
-internal data class ToolSpec(val name: String, val description: String, val properties: JsonObject) {
+internal data class ToolSpec(val name: String, val description: String, val properties: JsonObject, val annotations: ToolAnnotations? = null) {
     fun schema() = ToolSchema(properties = properties, required = properties.keys.toList())
 
     fun validate(args: JsonObject) {
@@ -43,7 +44,8 @@ internal object ToolCatalog {
             val tool = entry.jsonObject
             ToolSpec(tool.getValue("name").jsonPrimitive.content,
                 tool.getValue("description").jsonPrimitive.content,
-                tool.getValue("inputSchema").jsonObject.getValue("properties").jsonObject)
+                tool.getValue("inputSchema").jsonObject.getValue("properties").jsonObject,
+                tool["annotations"]?.let { Json.decodeFromJsonElement<ToolAnnotations>(it) })
         }
     }
 }

@@ -157,6 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             types.Tool(
                 name="devices_list",
                 description="List currently connected mua devices.",
+                annotations=types.ToolAnnotations(readOnlyHint=True),
                 inputSchema={"type": "object", "properties": {}},
             ),
             *device_tools.values(),

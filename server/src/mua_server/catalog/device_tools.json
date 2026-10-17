@@ -15,6 +15,9 @@
       "type": "object",
       "properties": {},
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
@@ -24,6 +27,9 @@
       "type": "object",
       "properties": {},
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
@@ -81,6 +87,9 @@
       "required": [
         "displayId"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
@@ -90,6 +99,9 @@
       "type": "object",
       "properties": {},
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
@@ -128,6 +140,9 @@
       "required": [
         "displayId"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {

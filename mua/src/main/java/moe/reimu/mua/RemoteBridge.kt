@@ -48,6 +48,7 @@ internal class RemoteBridge(
                                 ToolCatalog.specs.forEach { spec -> add(buildJsonObject {
                                     put("name", spec.name); put("description", spec.description)
                                     put("inputSchema", McpJson.encodeToJsonElement(spec.schema()))
+                                    spec.annotations?.let { put("annotations", McpJson.encodeToJsonElement(it)) }
                                 }) }
                             })
                         }.toString())

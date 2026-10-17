@@ -1,5 +1,6 @@
 package moe.reimu.mua
 
+import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.Socket
@@ -58,6 +59,15 @@ class McpHttpServerTest {
             val discovered = call("""{"jsonrpc":"2.0","id":3,"method":"tools/list"}""")
             assertEquals(200, discovered.first)
             ToolCatalog.specs.forEach { assertTrue(discovered.second.contains("\"name\":\"${it.name}\"")) }
+            val body = discovered.second.let { it.substring(it.indexOf('{'), it.lastIndexOf('}') + 1) }
+            val tools = Json.parseToJsonElement(body).jsonObject.getValue("result").jsonObject.getValue("tools").jsonArray
+            val readOnly = setOf("apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot")
+            tools.forEach { entry ->
+                val tool = entry.jsonObject
+                val name = tool.getValue("name").jsonPrimitive.content
+                val hint = tool["annotations"]?.jsonObject?.get("readOnlyHint")?.jsonPrimitive?.booleanOrNull ?: false
+                assertEquals(name, name in readOnly, hint)
+            }
             val tap = call("""{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tap","arguments":{"displayId":7,"x":1,"y":2}}}""")
             assertTrue(tap.second.contains("\"text\":\"OK\""))
             val invalid = call("""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tap","arguments":{"displayId":7,"x":null,"y":2}}}""")
