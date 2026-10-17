@@ -46,17 +46,17 @@ class McpService : Service() {
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("mcp", "Mua server", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel("mcp", getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, McpService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE)
         notificationBuilder = Notification.Builder(this, "mcp")
-            .setSmallIcon(R.drawable.ic_mua_notification).setContentTitle("Mua is running")
+            .setSmallIcon(R.drawable.ic_mua_notification).setContentTitle(getString(R.string.notification_running))
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
-            .addAction(Notification.Action.Builder(null, "Stop", stop).build()).setOngoing(true)
+            .addAction(Notification.Action.Builder(null, getString(R.string.stop), stop).build()).setOngoing(true)
         displayPowerStatus = DisplayPowerStatus()
         centralEnabled = loadRemoteConfig().enabled
-        remoteStatus = if (centralEnabled) "Connecting" else "Disabled"
+        remoteStatus = if (centralEnabled) UiText(R.string.connecting) else UiText(R.string.disabled)
         startForeground(1, buildNotification())
         try {
             display = DisplayTools(applicationContext, ::setDisplayCount)
@@ -65,10 +65,10 @@ class McpService : Service() {
             connection = ShizukuDisplayConnection(this, BuildConfig.DEBUG, BuildConfig.VERSION_CODE, { remote ->
                 worker.execute {
                     display.connected(remote)
-                    if (!destroying) status = if (remote == null) "Waiting for Shizuku permission/connection" else "Shizuku connected"
+                    if (!destroying) status = if (remote == null) UiText(R.string.shizuku_waiting) else UiText(R.string.shizuku_connected)
                 }
-            }, { error -> if (!destroying) status = error.message ?: "Shizuku connection failed" })
-            status = "Waiting for Shizuku permission/connection"
+            }, { error -> if (!destroying) status = UiText(R.string.failed, listOf(error.message ?: getString(R.string.shizuku_failed))) })
+            status = UiText(R.string.shizuku_waiting)
             connection.start()
             startTransports()
             running = true
@@ -76,7 +76,7 @@ class McpService : Service() {
         } catch (e: Exception) {
             destroying = true
             android.util.Log.e("MuaMcp", "Server startup failed", e)
-            status = "Server failed: ${e.message}"
+            status = UiText(R.string.server_failed, listOf(e.message.orEmpty()))
             Handler(Looper.getMainLooper()).post { stopSelf() }
         }
     }
@@ -92,7 +92,7 @@ class McpService : Service() {
     @Synchronized
     private fun startTransports() {
         val listener = loadListenerConfig()
-        localStatus = "Disabled"
+        localStatus = UiText(R.string.disabled)
         if (listener.enabled) {
             var candidate: McpHttpServer? = null
             try {
@@ -105,10 +105,10 @@ class McpService : Service() {
                 }
                 candidate.start()
                 server = candidate
-                localStatus = "Listening on ${listener.address}:${listener.port}"
+                localStatus = UiText(R.string.listening, listOf(listener.address, listener.port))
             } catch (e: Exception) {
                 runCatching { candidate?.stop() }
-                localStatus = "Failed: ${e.message}"
+                localStatus = UiText(R.string.failed, listOf(e.message.orEmpty()))
                 android.util.Log.e("MuaMcp", "Local MCP startup failed", e)
             }
         }
@@ -116,7 +116,7 @@ class McpService : Service() {
         centralEnabled = remoteConfig.enabled
         if (remoteConfig.enabled) {
             var candidate: RemoteBridge? = null
-            remoteStatus = "Connecting"
+            remoteStatus = UiText(R.string.connecting)
             try {
                 remoteConfig.validate()
                 candidate = RemoteBridge(remoteConfig, { value ->
@@ -138,14 +138,14 @@ class McpService : Service() {
                 bridge = candidate
             } catch (e: Exception) {
                 runCatching { candidate?.close() }
-                remoteStatus = "Failed: ${e.message}"
+                remoteStatus = UiText(R.string.failed, listOf(e.message.orEmpty()))
                 android.util.Log.e("MuaMcp", "Central connection startup failed", e)
             }
         }
         notificationBuilder.setSubText(listOfNotNull(
             if (server != null) "MCP ${listener.address}:${listener.port}" else null,
-            if (centralEnabled) "Central server" else null,
-        ).joinToString(" · ").ifEmpty { "Connections disabled" })
+            if (centralEnabled) getString(R.string.central_server) else null,
+        ).joinToString(" · ").ifEmpty { getString(R.string.connections_disabled) })
         updateNotification()
     }
 
@@ -183,8 +183,8 @@ class McpService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val text = listOfNotNull(displayPowerStatus.summary,
-            if (centralEnabled) "Central: $remoteStatus" else null).joinToString("\n")
+        val text = listOfNotNull(displayPowerStatus.summary(this),
+            if (centralEnabled) getString(R.string.central_status, remoteStatus.resolve(this)) else null).joinToString("\n")
         return notificationBuilder.setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text)).build()
     }
@@ -194,12 +194,12 @@ class McpService : Service() {
         if (previewService === this) previewService = null
         getSystemService(android.hardware.display.DisplayManager::class.java).unregisterDisplayListener(displayListener)
         running = false
-        localStatus = "Stopped"
+        localStatus = UiText(R.string.stopped)
         setDisplayCount(0)
         displayPowerStatus = DisplayPowerStatus()
         try {
             try { bridge?.close() } finally { server?.stop() }
-            remoteStatus = "Stopped"
+            remoteStatus = UiText(R.string.stopped)
         } finally {
             try {
                 // Remove callbacks before retiring the worker; queued operations finish before capture cleanup.
@@ -242,11 +242,11 @@ class McpService : Service() {
         }
         @Volatile internal var displayPowerStatus = DisplayPowerStatus()
             private set
-        @Volatile var localStatus = "Stopped"
+        @Volatile internal var localStatus = UiText(R.string.stopped)
             private set
-        @Volatile var remoteStatus = "Stopped"
+        @Volatile internal var remoteStatus = UiText(R.string.stopped)
             private set
-        @Volatile var status = "Stopped"
+        @Volatile internal var status = UiText(R.string.stopped)
             private set
         @Volatile var running = false
             private set

@@ -16,7 +16,7 @@ internal class MainViewModel(private val app: Application) : AndroidViewModel(ap
     private val handler = Handler(Looper.getMainLooper())
     var localEnabled by mutableStateOf(true)
         private set
-    var localStatus by mutableStateOf("Stopped")
+    var localStatus by mutableStateOf(UiText(R.string.stopped))
         private set
     var listenAddress by mutableStateOf("127.0.0.1")
         private set
@@ -30,9 +30,9 @@ internal class MainViewModel(private val app: Application) : AndroidViewModel(ap
     }
     var remoteConfig by mutableStateOf(RemoteConfig())
         private set
-    var remoteStatus by mutableStateOf("Stopped")
+    var remoteStatus by mutableStateOf(UiText(R.string.stopped))
         private set
-    val remoteError: String? get() = runCatching { remoteConfig.validate() }.exceptionOrNull()?.message
+    val remoteError: UiText? get() = remoteConfig.validationError()?.let { UiText(it.resource) }
     fun updateRemote(config: RemoteConfig) {
         if (running || McpService.running) return
         remoteConfig = config
@@ -42,7 +42,7 @@ internal class MainViewModel(private val app: Application) : AndroidViewModel(ap
         private set
     var displayPowerStatus by mutableStateOf(DisplayPowerStatus())
         private set
-    var status by mutableStateOf("Stopped")
+    var status by mutableStateOf(UiText(R.string.stopped))
         private set
     var batteryExempt by mutableStateOf(false)
         private set
@@ -81,7 +81,7 @@ internal class MainViewModel(private val app: Application) : AndroidViewModel(ap
             remoteStatus = McpService.remoteStatus
             displayPowerStatus = McpService.displayPowerStatus
             status = if (running) McpService.status else
-                McpService.status.takeIf { it.startsWith("Server failed:") } ?: "Stopped"
+                McpService.status.takeIf { it.resource == R.string.server_failed } ?: UiText(R.string.stopped)
             batteryExempt = app.getSystemService(PowerManager::class.java)
                 .isIgnoringBatteryOptimizations(app.packageName)
             handler.postDelayed(this, 1000)

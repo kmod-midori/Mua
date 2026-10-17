@@ -16,7 +16,7 @@ import kotlinx.serialization.json.*
 /** Outbound transport only: validation and display execution are shared with local MCP. */
 internal class RemoteBridge(
     private val config: RemoteConfig,
-    private val status: (String) -> Unit,
+    private val status: (UiText) -> Unit,
     private val execute: suspend (String, JsonObject) -> CallToolResult,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -36,7 +36,7 @@ internal class RemoteBridge(
         job = scope.launch {
             var retryMillis = 1000L
             while (isActive) {
-                report("Connecting")
+                report(UiText(R.string.connecting))
                 var failure = ""
                 try {
                     client.webSocket(config.endpoint(), request = {
@@ -55,7 +55,7 @@ internal class RemoteBridge(
                         check(ready["type"]?.jsonPrimitive?.content == "ready" &&
                             ready["version"]?.jsonPrimitive?.int == 1) { "Unsupported bridge protocol" }
                         retryMillis = 1000L
-                        report("Connected")
+                        report(UiText(R.string.connected))
                         for (frame in incoming) {
                             if (frame !is Frame.Text) continue
                             val request = Json.parseToJsonElement(frame.readText()).jsonObject
@@ -87,7 +87,7 @@ internal class RemoteBridge(
                     // Class names aid diagnosis without exposing URLs, credentials, or response bodies.
                     failure = " (${e.javaClass.simpleName})"
                 }
-                report("Disconnected$failure · retrying in ${retryMillis / 1000}s")
+                report(UiText(R.string.retrying, listOf(failure, retryMillis / 1000)))
                 delay(retryMillis)
                 retryMillis = (retryMillis * 2).coerceAtMost(30000)
             }
@@ -95,13 +95,13 @@ internal class RemoteBridge(
     }
 
     @Synchronized
-    private fun report(value: String) { if (!closed) status(value) }
+    private fun report(value: UiText) { if (!closed) status(value) }
 
     @Synchronized
     override fun close() {
         closed = true
         scope.cancel()
         client.close()
-        status("Stopped")
+        status(UiText(R.string.stopped))
     }
 }
