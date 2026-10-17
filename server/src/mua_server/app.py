@@ -8,6 +8,7 @@ import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from importlib.metadata import version
 from importlib.resources import files
 from uuid import uuid4
 
@@ -139,7 +140,7 @@ def text_result(value) -> types.CallToolResult:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     registry = Registry()
-    mcp = Server("mua-central")
+    mcp = Server("mua-central", version=version("mua-server"))
     catalog = json.loads(files("mua_server").joinpath("catalog/device_tools.json").read_text())
     device_tools = {}
     for definition in catalog:
@@ -195,7 +196,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             finally:
                 await registry.close()
 
-    app = FastAPI(title="mua central server", lifespan=lifespan)
+    app = FastAPI(title="mua central server", version=version("mua-server"), lifespan=lifespan)
     app.state.registry = registry
 
     @app.middleware("http")

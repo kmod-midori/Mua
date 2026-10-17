@@ -34,7 +34,7 @@ internal class McpHttpServer(
         require(port == 0 || port in 1024..65535)
     }
     private val mcp = Server(
-        serverInfo = Implementation(name = "mua", version = "1.0"),
+        serverInfo = Implementation(name = "mua", version = BuildConfig.VERSION_NAME),
         options = ServerOptions(capabilities = ServerCapabilities(tools = ServerCapabilities.Tools())),
     ).apply {
         ToolCatalog.specs.forEach { spec ->
