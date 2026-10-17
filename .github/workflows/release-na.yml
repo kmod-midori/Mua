@@ -1,0 +1,63 @@
+name: Release Neko Assistant
+
+on:
+  push:
+    tags:
+      - 'na-[0-9]*.[0-9]*.[0-9]*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-na-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      MODULE: app
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Validate release tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^na-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo 'Expected na-x.x.x' >&2
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-android
+      - name: Restore release signing files
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_PROPERTIES: ${{ secrets.ANDROID_SIGNING_PROPERTIES }}
+        shell: bash
+        run: |
+          test -n "$KEYSTORE_BASE64" && test -n "$SIGNING_PROPERTIES"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > keystore.jks
+          printf '%s\n' "$SIGNING_PROPERTIES" > signing.properties
+      - name: Build and test release
+        run: ./gradlew ":$MODULE:assembleRelease" ":$MODULE:testDebugUnitTest" :display-control:testDebugUnitTest
+      - name: Verify and name APK
+        run: |
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$MODULE/build/outputs/apk/release/$MODULE-release.apk"
+          cp "$MODULE/build/outputs/apk/release/$MODULE-release.apk" "$TAG.apk"
+      - name: Remove signing files
+        if: always()
+        run: rm -f keystore.jks signing.properties
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" "$TAG.apk" --clobber

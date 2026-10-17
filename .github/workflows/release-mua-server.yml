@@ -1,0 +1,76 @@
+name: Release mua server
+
+on:
+  push:
+    tags:
+      - 'mua-server-[0-9]*.[0-9]*.[0-9]*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-mua-server-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Validate release tag
+        id: tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^mua-server-([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo 'Expected mua-server-x.x.x' >&2
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.13.0'
+          python-version: '3.14'
+      - name: Test and lint
+        working-directory: server
+        run: |
+          uv sync --locked
+          uv run --no-sync pytest -q
+          uv run --no-sync ruff check src tests
+          uv run --no-sync ruff format --check src tests
+      - name: Determine image name
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}/mua-server" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: server
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ steps.tag.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=mua-server
+          cache-to: type=gha,mode=max,scope=mua-server
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          IMAGE: ${{ steps.image.outputs.name }}:${{ steps.tag.outputs.version }}
+        run: |
+          printf 'Container image: `%s`\n' "$IMAGE" > "$RUNNER_TEMP/release-notes.md"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi

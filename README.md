@@ -1,44 +1,53 @@
-# Neko Assistant
+# mua (Mobile-Using Agent)
 
-![Neko Assistant banner](media/banner.png)
+![mua — Mobile-Using Agent](media/mua-banner.png)
 
-Neko Assistant is an open-source replica of [Doubao Phone Assistant](https://o.doubao.com/).
+mua exposes Android apps to MCP clients through Shizuku-powered virtual displays.
+Create displays, launch apps, capture screenshots, and inject touch and key input
+while the phone’s physical screen is off. Connect directly to the phone or use
+the optional central server to access multiple devices through one MCP endpoint.
 
-It uses an LLM agent to operate phone apps in the background. Shizuku lets the assistant view and interact with apps.
+## Get started
 
-## Modules
+You need Android 12 or newer, a running [Shizuku](https://shizuku.rikka.app/)
+installation authorized through ADB or root, and an MCP client supporting
+Streamable HTTP.
 
-- `app`: Neko Assistant, including the agent and chat harness.
+1. Build with `./gradlew :mua:assembleDebug` and install
+   `mua/build/outputs/apk/debug/mua-debug.apk`.
+2. Open **mua** and grant Shizuku permission. Select `0.0.0.0` as the listening
+   address to connect from another device on your network, then tap **Start mua**.
+3. Copy the endpoint URL and **Authorization** value from **Client connection**
+   into your MCP client.
+4. Call `display_start`, then use the returned `displayId` to launch apps,
+   capture screenshots, and send input.
+
+See the [mua quick start](mua/README.md) and
+[configuration and MCP tools](docs/mua.md) for details. For screen-off sessions,
+use the battery optimization setup card. mua keeps the CPU awake while virtual
+displays are active.
+
+## Central server
+
+The optional [mua server](server/README.md) connects devices through outbound
+WebSockets and exposes their tools through a single MCP endpoint. Use
+`devices_list` to find connected devices, then pass `deviceId` to device tools.
+The server uses FastAPI and uv and can run in Docker.
+
+See [central gateway setup](docs/mua-remote.md) for device registration,
+authentication, and deployment.
+
+## Project modules
+
+- [mua](mua/README.md): Android MCP app.
+- [server](server/README.md): central MCP gateway for multiple devices.
 - [display-control](display-control/README.md): shared Shizuku virtual display,
-  frame capture, app launching, and input injection library.
-- [mua (Mobile-Using Agent)](mua/README.md): standalone Android app exposing the
-  library through a configurable MCP server, without the agent or harness.
-- [server](server/README.md): optional FastAPI central MCP gateway for devices
-  connected through outbound WebSockets, managed with uv.
-
-## Requirements
-
-- Android 12 or newer
-- [Shizuku](https://shizuku.rikka.app/) installed, running, and authorized through ADB or root
-- An OpenAI-compatible LLM provider and model configured in the app
-
-## Optional Termux shell
-
-Install and open [Termux](https://github.com/termux/termux-app) to initialize its
-environment. Set `allow-external-apps=true` in `~/.termux/termux.properties` and
-reload its settings with `termux-reload-settings`. Install any command-line
-packages you want the assistant to use in Termux.
-
-The assistant asks you to approve each command and its working directory before
-running it in the background. You can reject a command and optionally tell the
-assistant what to do instead. On first approval, Android asks for
-NekoAssistant's **Run commands in Termux environment** permission. If needed,
-enable it in Android Settings → Apps → NekoAssistant → Permissions.
-
-You can review command output in the conversation. Stopping the assistant or
-reaching the waiting limit may leave the command running in Termux. Check
-Termux before retrying a command whose result is unknown.
+  screenshot, app launching, and input injection library.
+- [Neko Assistant](docs/neko-assistant.md) (`app`): companion Android app with
+  an LLM agent and chat harness, inspired by
+  [Doubao Phone Assistant](https://o.doubao.com/).
 
 ## Development
 
-See [build and validation](docs/development.md) for build commands and device checks.
+See [build and validation](docs/development.md) for build commands, release
+signing, GitHub Actions, and device checks.

@@ -12,6 +12,29 @@ Debug APKs are written to each application module’s `build/outputs/apk/debug/`
 directory. The mua JVM tests cover tool validation, listener configuration, MCP
 transport behavior, authorization rotation, and custom Host/Origin acceptance.
 
+## Release signing
+
+Both Android apps read the root `signing.properties` file, using the same format
+as ANCSReceiver:
+
+```properties
+KEYSTORE_FILE=../keystore.jks
+KEYSTORE_PASSWORD=your-store-password
+SIGNING_KEY_ALIAS=your-key-alias
+SIGNING_KEY_PASSWORD=your-key-password
+```
+
+Relative keystore paths are resolved from each application module, so
+`../keystore.jks` refers to the repository root. The root `signing.properties`
+and `keystore.jks` are ignored by Git. Keep signing credentials private.
+
+```sh
+./gradlew :app:assembleRelease :mua:assembleRelease
+```
+
+Signed APKs are written to each application module’s `build/outputs/apk/release/`
+directory. Debug builds do not require release credentials.
+
 ## Device checks
 
 Use an Android 12+ device with Shizuku running. JVM tests cannot validate hidden
@@ -42,3 +65,36 @@ Android APIs, display rendering, input routing, or system power behavior.
 - Test screen-off rendering separately from Doze. A charging device does not
   establish behavior during long unplugged idle periods. See Android’s
   [Doze testing guide](https://developer.android.com/training/monitoring-device-state/doze-standby#testing_doze).
+
+## GitHub Actions
+
+Branch pushes run `.github/workflows/debug.yml`: both Android debug APKs are
+uploaded as workflow artifacts, JVM tests run, and the server is tested, linted,
+and built as a container without publishing.
+
+Push a release tag to run its corresponding workflow in `.github/workflows/`:
+`release-na.yml`, `release-mua.yml`, or `release-mua-server.yml`. Each workflow
+only accepts its own tag prefix; tag pushes do not run the debug workflow.
+
+| Tag | Published output |
+| --- | --- |
+| `na-1.2.3` | Signed Neko Assistant APK attached to the GitHub release |
+| `mua-1.2.3` | Signed mua APK attached to the GitHub release |
+| `mua-server-1.2.3` | `ghcr.io/<owner>/<repository>/mua-server:1.2.3` and a GitHub release linking the image |
+
+Versions must have three numeric components. Only the selected component is
+released. Tags name the release and artifacts; they do not change Android
+version codes/names or the Python package version. Update those separately when
+needed. Server images target the runner's Linux amd64 architecture.
+
+For Android releases, configure these repository Actions secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: base64-encoded contents of the release keystore.
+- `ANDROID_SIGNING_PROPERTIES`: the full `signing.properties` contents shown
+  above, with `KEYSTORE_FILE=../keystore.jks` and the actual passwords and alias.
+
+Signing files are restored only for the release job and removed afterward.
+Debug builds and server releases do not need signing secrets. GHCR publishing
+uses the built-in `GITHUB_TOKEN` with `packages: write`; no registry password is
+needed. The workflow creates GitHub releases with `contents: write`. Package
+visibility is configured separately in GitHub's package settings.

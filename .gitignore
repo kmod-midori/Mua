@@ -10,3 +10,6 @@
 local.properties
 
 .kotlin/
+
+/keystore.jks
+/signing.properties
