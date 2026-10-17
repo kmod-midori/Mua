@@ -3,6 +3,8 @@ name: Debug
 on:
   push:
     branches: ['**']
+    paths-ignore:
+      - '**/*.md'
 
 permissions:
   contents: read

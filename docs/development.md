@@ -68,7 +68,8 @@ Android APIs, display rendering, input routing, or system power behavior.
 
 ## GitHub Actions
 
-Branch pushes run `.github/workflows/debug.yml`: both Android debug APKs are
+Branch pushes, except those changing only Markdown (`*.md`) files, run
+`.github/workflows/debug.yml`: both Android debug APKs are
 uploaded as workflow artifacts, JVM tests run, and the server is tested, linted,
 and built as a container without publishing.
 

@@ -2,9 +2,12 @@
 
 ![mua — Mobile-Using Agent](media/mua-banner.png)
 
-mua exposes Android apps to MCP clients through Shizuku-powered virtual displays.
-Create displays, launch apps, capture screenshots, and inject touch and key input
-while the phone’s physical screen is off. Connect directly to the phone or use
+mua lets an AI agent work for you in Android apps **while you use another app on
+your phone, or while the screen is off**. The agent operates apps on separate
+virtual displays, leaving the physical screen available for you.
+
+Through MCP and Shizuku, agents can create displays, launch apps, capture
+screenshots, and send touch and key input. Connect directly to the phone or use
 the optional central server to access multiple devices through one MCP endpoint.
 
 ## Get started
