@@ -373,6 +373,15 @@ def test_direct_dispatch_preserves_extra_arguments(client):
 
 
 def test_read_only_hints(client):
-    read_only = {"devices_list", "apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot"}
+    read_only = {
+        "devices_list",
+        "apps_list",
+        "displays_list",
+        "recent_tasks_list",
+        "focused_app",
+        "screenshot",
+    }
     for tool in tool_list(client):
-        assert (tool.get("annotations") or {}).get("readOnlyHint", False) == (tool["name"] in read_only)
+        assert (tool.get("annotations") or {}).get("readOnlyHint", False) == (
+            tool["name"] in read_only
+        )
