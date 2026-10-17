@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun MainPage() = with(viewModel) {
-        Scaffold(topBar = { TopAppBar(title = { Text("mua") }) }) { padding ->
+        Scaffold(topBar = { TopAppBar(title = { Text("Mua") }) }) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(16.dp),
@@ -145,7 +145,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 item {
-                    SectionCard("mua") {
+                    SectionCard("Mua") {
                         Text(status, style = MaterialTheme.typography.bodyMedium)
                         Text(displayPowerStatus.summary, style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -160,7 +160,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             } },
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text(if (running) "Stop mua" else "Start mua") }
+                        ) { Text(if (running) "Stop Mua" else "Start Mua") }
                     }
                 }
                 item {
@@ -215,7 +215,7 @@ class MainActivity : ComponentActivity() {
                                 val endpoint = "http://$host:$port/mcp"
                                 CopyRow(endpoint, "Copy endpoint URL: $endpoint") { perform {
                                     getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                                        ClipData.newPlainText("mua endpoint", endpoint))
+                                        ClipData.newPlainText("Mua endpoint", endpoint))
                                     Toast.makeText(this@MainActivity, "Endpoint URL copied", Toast.LENGTH_SHORT).show()
                                 } }
                             }
@@ -225,7 +225,7 @@ class MainActivity : ComponentActivity() {
                                     style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 IconButton(onClick = { perform {
                                     getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                                        ClipData.newPlainText("mua authorization", authorization).apply {
+                                        ClipData.newPlainText("Mua authorization", authorization).apply {
                                             if (Build.VERSION.SDK_INT >= 33) description.extras = android.os.PersistableBundle().apply {
                                                 putBoolean("android.content.extra.IS_SENSITIVE", true)
                                             }
@@ -268,7 +268,7 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxWidth(), trailingIcon = {
                                     IconButton(onClick = { perform {
                                         getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                                            ClipData.newPlainText("mua device ID", remoteConfig.deviceId))
+                                            ClipData.newPlainText("Mua device ID", remoteConfig.deviceId))
                                     } }) { Icon(Icons.Default.ContentCopy, "Copy device ID") }
                                 })
                             OutlinedTextField(value = remoteConfig.token,
@@ -288,9 +288,9 @@ class MainActivity : ComponentActivity() {
                     SectionCard("Screen-off operation") {
                         Text("Battery optimization enabled",
                             style = MaterialTheme.typography.titleMedium)
-                        Text("mua keeps the CPU awake only while any virtual display is active, without turning on the screen. Stop the display when finished to save battery.",
+                        Text("Mua keeps the CPU awake only while any virtual display is active, without turning on the screen. Stop the display when finished to save battery.",
                             style = MaterialTheme.typography.bodyMedium)
-                        Text("For long screen-off sessions, show all apps in battery settings and allow mua to run without optimization.",
+                        Text("For long screen-off sessions, show all apps in battery settings and allow Mua to run without optimization.",
                             style = MaterialTheme.typography.bodyMedium)
                         TextButton(onClick = { perform {
                             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))

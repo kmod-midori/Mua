@@ -46,11 +46,11 @@ class McpService : Service() {
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel("mcp", "mua server", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel("mcp", "Mua server", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, McpService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE)
         notificationBuilder = Notification.Builder(this, "mcp")
-            .setSmallIcon(android.R.drawable.ic_menu_view).setContentTitle("mua is running")
+            .setSmallIcon(R.drawable.ic_mua_notification).setContentTitle("Mua is running")
             .setContentIntent(open)
             .setOnlyAlertOnce(true)
             .addAction(Notification.Action.Builder(null, "Stop", stop).build()).setOngoing(true)
@@ -99,7 +99,7 @@ class McpService : Service() {
                 candidate = McpHttpServer(accessToken(this), listener.port, listener.address,
                     tokenProvider = { accessToken(this) }) { name, args ->
                     withContext(controlDispatcher) {
-                        check(!destroying) { "mua is stopping" }
+                        check(!destroying) { "Mua is stopping" }
                         display.execute(name, args)
                     }
                 }
@@ -130,7 +130,7 @@ class McpService : Service() {
                     }
                 }) { name, args ->
                     withContext(controlDispatcher) {
-                        check(!destroying) { "mua is stopping" }
+                        check(!destroying) { "Mua is stopping" }
                         display.execute(name, args)
                     }
                 }

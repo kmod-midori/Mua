@@ -44,7 +44,7 @@ internal class DisplayTools(
                 }) }
             }.toString())
         }
-        val service = checkNotNull(remote) { "Shizuku is not connected. Grant permission in mua and start Shizuku." }
+        val service = checkNotNull(remote) { "Shizuku is not connected. Grant permission in Mua and start Shizuku." }
         if (name == "recent_tasks_list") return textContent(service.recentTasksJson)
         reconcile(service)
         fun int(key: String) = args.getValue(key).jsonPrimitive.int
