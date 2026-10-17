@@ -79,9 +79,9 @@ only accepts its own tag prefix; tag pushes do not run the debug workflow.
 
 | Tag | Published output |
 | --- | --- |
-| `na-1.2.3` | Signed Neko Assistant APK attached to the GitHub release |
-| `mua-1.2.3` | Signed mua APK attached to the GitHub release |
-| `mua-server-1.2.3` | `ghcr.io/<owner>/<repository>/mua-server:1.2.3` and a GitHub release linking the image |
+| `na-1.2.3` | Signed Neko Assistant APK attached to a draft GitHub release |
+| `mua-1.2.3` | Signed mua APK attached to a draft GitHub release |
+| `mua-server-1.2.3` | `ghcr.io/<owner>/<repository>/mua-server:1.2.3` and a draft GitHub release linking the image |
 
 Versions must have three numeric components. Only the selected component is
 released. Tags name the release and artifacts; they do not change Android
@@ -97,5 +97,6 @@ For Android releases, configure these repository Actions secrets:
 Signing files are restored only for the release job and removed afterward.
 Debug builds and server releases do not need signing secrets. GHCR publishing
 uses the built-in `GITHUB_TOKEN` with `packages: write`; no registry password is
-needed. The workflow creates GitHub releases with `contents: write`. Package
+needed. The workflows create draft GitHub releases with `contents: write`; publish them
+manually after review. Container images are still pushed to GHCR automatically. Package
 visibility is configured separately in GitHub's package settings.

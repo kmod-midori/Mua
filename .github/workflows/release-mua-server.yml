@@ -64,7 +64,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=mua-server
           cache-to: type=gha,mode=max,scope=mua-server
-      - name: Publish GitHub release
+      - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -72,5 +72,5 @@ jobs:
         run: |
           printf 'Container image: `%s`\n' "$IMAGE" > "$RUNNER_TEMP/release-notes.md"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
           fi

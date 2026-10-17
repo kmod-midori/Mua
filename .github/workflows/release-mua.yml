@@ -53,11 +53,11 @@ jobs:
       - name: Remove signing files
         if: always()
         run: rm -f keystore.jks signing.properties
-      - name: Publish GitHub release
+      - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --generate-notes
           fi
           gh release upload "$TAG" "$TAG.apk" --clobber
