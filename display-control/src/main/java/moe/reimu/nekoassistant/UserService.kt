@@ -31,6 +31,7 @@ import kotlin.system.exitProcess
 class UserService : IUserService.Stub() {
     private var virtualDisplay: VirtualDisplay? = null
 
+    @Synchronized
     override fun destroy() {
         Log.i(TAG, "destroy")
 
@@ -39,15 +40,18 @@ class UserService : IUserService.Stub() {
         exitProcess(0)
     }
 
+    @Synchronized
     override fun startDisplay(
         width: Int, height: Int, dpi: Int, surface: Surface?
     ): Boolean {
         Log.i(TAG, "startDisplay $width x $height @ $dpi DPI")
 
-        if (surface == null) {
-            Log.e(TAG, "startDisplay called with null surface")
+        if (width <= 0 || height <= 0 || dpi <= 0 || surface == null) {
+            Log.e(TAG, "startDisplay called with invalid dimensions or null surface")
             return false
         }
+
+        stopDisplay()
 
         var flags = (DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
                 or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
@@ -99,6 +103,7 @@ class UserService : IUserService.Stub() {
         }
     }
 
+    @Synchronized
     override fun stopDisplay(): Boolean {
         Log.i(TAG, "stopDisplay")
 
@@ -112,15 +117,14 @@ class UserService : IUserService.Stub() {
         return manager::class.java.getMethod("getTasks", Int::class.javaPrimitiveType)
     }
 
+    @Synchronized
     override fun startActivity(
         intent: Intent,
         forceStop: Boolean
     ) {
         val options = ActivityOptions.makeBasic()
-        val displayId = virtualDisplay?.display?.displayId
-        if (displayId != null) {
-            options.launchDisplayId = displayId
-        }
+        val displayId = virtualDisplay?.display?.displayId ?: error("No virtual display")
+        options.launchDisplayId = displayId
 
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
@@ -129,10 +133,12 @@ class UserService : IUserService.Stub() {
             am.startActivity(intent, options.toBundle())
         } catch (e: Exception) {
             Log.e(TAG, "Failed to startActivity $intent", e)
+            throw IllegalStateException("Failed to launch activity", e)
         }
     }
 
     @Suppress("UNCHECKED_CAST")
+    @Synchronized
     override fun getFocusedPackageName(): String? {
         val virtualDisplayId = virtualDisplay?.display?.displayId ?: return null
 
@@ -177,6 +183,7 @@ class UserService : IUserService.Stub() {
         FakeContext.getInstance().getSystemService(Context.INPUT_SERVICE) as InputManager
     }
 
+    @Synchronized
     override fun injectInputEvent(input: InputEvent): Boolean {
         val displayId = virtualDisplay?.display?.displayId ?: return false
 
@@ -223,12 +230,14 @@ class UserService : IUserService.Stub() {
     }
 
 
+    @Synchronized
     override fun injectTapEvent(x: Float, y: Float): Boolean {
         try {
             val downTime = SystemClock.uptimeMillis()
 
             val eventDown = makeTapEvent(downTime, MotionEvent.ACTION_DOWN, x, y)
-            if (!injectInputEvent(eventDown)) {
+            val downInjected = try { injectInputEvent(eventDown) } finally { eventDown.recycle() }
+            if (!downInjected) {
                 Log.e(TAG, "Failed to inject ACTION_DOWN event at ($x, $y)")
                 return false
             }
@@ -236,7 +245,8 @@ class UserService : IUserService.Stub() {
             Thread.sleep(Random.nextLong(180, 220))
 
             val eventUp = makeTapEvent(downTime, MotionEvent.ACTION_UP, x, y)
-            if (!injectInputEvent(eventUp)) {
+            val upInjected = try { injectInputEvent(eventUp) } finally { eventUp.recycle() }
+            if (!upInjected) {
                 Log.e(TAG, "Failed to inject ACTION_UP event at ($x, $y)")
                 return false
             }
@@ -248,10 +258,12 @@ class UserService : IUserService.Stub() {
         }
     }
 
+    @Synchronized
     override fun injectKeyPressEvent(keyCode: Int): Boolean {
         return runInputCommand("keyevent $keyCode")
     }
 
+    @Synchronized
     override fun injectSwipeEvent(
         x1: Float, y1: Float, x2: Float, y2: Float, duration: Long
     ): Boolean {

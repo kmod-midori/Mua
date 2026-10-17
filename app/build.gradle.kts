@@ -40,7 +40,6 @@ android {
     }
     buildFeatures {
         compose = true
-        aidl = true
         buildConfig = true
     }
 }
@@ -52,6 +51,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":display-control"))
     implementation(libs.termux.shared)
     implementation(libs.guava.listenablefuture)
     implementation(libs.androidx.core.ktx)

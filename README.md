@@ -6,6 +6,14 @@ Neko Assistant is an open-source replica of [Doubao Phone Assistant](https://o.d
 
 It uses an LLM agent to operate phone apps in the background. Shizuku lets the assistant view and interact with apps.
 
+## Modules
+
+- `app`: Neko Assistant, including the agent and chat harness.
+- [display-control](display-control/README.md): shared Shizuku virtual display,
+  frame capture, app launching, and input injection library.
+- [mua (Mobile-Using Agent)](mua/README.md): standalone Android app exposing the
+  library through a configurable MCP server, without the agent or harness.
+
 ## Requirements
 
 - Android 12 or newer
@@ -28,3 +36,7 @@ enable it in Android Settings → Apps → NekoAssistant → Permissions.
 You can review command output in the conversation. Stopping the assistant or
 reaching the waiting limit may leave the command running in Termux. Check
 Termux before retrying a command whose result is unknown.
+
+## Development
+
+See [build and validation](docs/development.md) for build commands and device checks.

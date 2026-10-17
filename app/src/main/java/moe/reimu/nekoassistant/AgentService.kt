@@ -10,11 +10,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.PixelFormat
-import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
-import android.media.Image
-import android.media.ImageReader
 import android.os.Binder
 import android.os.Handler
 import android.os.HandlerThread
@@ -25,7 +21,6 @@ import android.util.Log
 import android.util.Size
 import android.view.Display
 import androidx.core.app.NotificationCompat
-import androidx.core.graphics.createBitmap
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
@@ -61,6 +56,7 @@ import moe.reimu.nekoassistant.ai.ChatMessage
 import moe.reimu.nekoassistant.ai.generateConversationTitle
 import moe.reimu.nekoassistant.data.ActiveLlmConfiguration
 import moe.reimu.nekoassistant.data.LlmConfigurationRepository
+import moe.reimu.displaycontrol.DisplayCapture
 import rikka.shizuku.Shizuku
 import java.util.Base64
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -143,15 +139,14 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private val frameThread = HandlerThread("display-frames").apply { start() }
     private val frameHandler = Handler(frameThread.looper)
 
-    private var imageReader: ImageReader? = null
+    private var capture: DisplayCapture? = null
 
     private val imageLock = Any()
-    private var heldImage: Image? = null
     private var lastPreviewFrameAtMs = 0L
 
     private val renderPreview = Runnable {
         synchronized(imageLock) {
-            if (frames.subscriptionCount.value > 0 && heldImage != null) {
+            if (frames.subscriptionCount.value > 0 && capture != null) {
                 try {
                     // Own the pixels: closing an Image permits its producer to reuse its
                     // buffer even while Compose is still drawing the previous bitmap.
@@ -172,27 +167,14 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         frameHandler.postDelayed(renderPreview, delay)
     }
 
-    private val imageListener = ImageReader.OnImageAvailableListener { reader ->
-        synchronized(imageLock) {
-            if (reader !== imageReader) return@OnImageAvailableListener
-            val image = reader.acquireLatestImage() ?: return@OnImageAvailableListener
-            heldImage?.close()
-            heldImage = image
-            schedulePreview()
-        }
-    }
-
     private fun releaseCapture() {
         synchronized(imageLock) {
             stateStore.update { it.copy(hasDisplay = false, availableApp = null) }
             launchedPackages.clear()
             lastConfirmedApp = null
             frameHandler.removeCallbacks(renderPreview)
-            imageReader?.setOnImageAvailableListener(null, null)
-            heldImage?.close()
-            heldImage = null
-            imageReader?.close()
-            imageReader = null
+            capture?.close()
+            capture = null
             lastPreviewFrameAtMs = 0L
             frames.value = null
         }
@@ -332,26 +314,21 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         if (displayStarted && userServices.value != null) return true
         val service = withTimeoutOrNull(10_000) { userServices.filterNotNull().first() }
             ?: return false
-        val reader = ImageReader.newInstance(
-            displayMetrics.widthPixels,
-            displayMetrics.heightPixels,
-            PixelFormat.RGBA_8888,
-            4,
-            HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
-        )
+        val reader = DisplayCapture(displayMetrics.widthPixels, displayMetrics.heightPixels, frameHandler) {
+            synchronized(imageLock) { schedulePreview() }
+        }
         var started = false
         try {
             synchronized(imageLock) {
                 if (destroying || service !== userServices.value) return false
-                imageReader = reader
-                reader.setOnImageAvailableListener(imageListener, frameHandler)
+                capture = reader
             }
             if (!service.startDisplay(
                     displayMetrics.widthPixels, displayMetrics.heightPixels,
                     displayMetrics.densityDpi, reader.surface,
             )) return false
             started = synchronized(imageLock) {
-                if (reader !== imageReader || service !== userServices.value || destroying) false else {
+                if (reader !== capture || service !== userServices.value || destroying) false else {
                     stateStore.update { it.copy(hasDisplay = true) }
                     true
                 }
@@ -360,7 +337,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         } finally {
             if (!started) {
                 synchronized(imageLock) {
-                    if (imageReader === reader) releaseCapture() else reader.close()
+                    if (capture === reader) releaseCapture() else reader.close()
                 }
             }
         }
@@ -435,30 +412,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         intent.component?.packageName?.let { launchedPackages.add(it) }
     }
 
-    fun getBitmap(): Bitmap? = synchronized(imageLock) {
-        val image = heldImage ?: return@synchronized null
-        val plane = image.planes[0]
-        val width = image.width
-        val rowPadding = plane.rowStride - plane.pixelStride * width
-
-        val padded = createBitmap(width + rowPadding / plane.pixelStride, image.height)
-        // Every agent step screenshots the same held frame until a new one arrives, and
-        // copyPixelsFromBuffer reads from the buffer's current position — without the rewind
-        // the second read starts at the end of a buffer that is now empty.
-        plane.buffer.rewind()
-        padded.copyPixelsFromBuffer(plane.buffer)
-
-        val cropRect = image.cropRect
-        val cropped = Bitmap.createBitmap(
-            padded,
-            cropRect.left,
-            cropRect.top,
-            cropRect.width(),
-            cropRect.height()
-        )
-        if (cropped !== padded) padded.recycle()
-        cropped
-    }
+    fun getBitmap(): Bitmap? = synchronized(imageLock) { capture?.bitmap() }
 
     fun getFocusedAppName(): String? {
         if (!displayStarted) return null

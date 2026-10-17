@@ -1,4 +1,6 @@
 [versions]
+mcp = "0.15.0"
+kotlinxSerialization = "1.11.0"
 accompanistPermissions = "0.37.3"
 agp = "9.2.1"
 coreKtx = "1.19.0"
@@ -17,6 +19,9 @@ room = "2.8.4"
 ksp = "2.3.12"
 
 [libraries]
+mcp-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcp" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 termux-shared = { module = "com.termux.termux-app:termux-shared", version = "0.118.0" }
 guava-listenablefuture = { module = "com.google.guava:listenablefuture", version = "9999.0-empty-to-avoid-conflict-with-guava" }
 accompanist-permissions = { module = "com.google.accompanist:accompanist-permissions", version.ref = "accompanistPermissions" }
@@ -55,6 +60,7 @@ androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = 
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
 [plugins]
+android-library = { id = "com.android.library", version.ref = "agp" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

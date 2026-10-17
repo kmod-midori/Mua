@@ -27,3 +27,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Neko Assistant"
 include(":app")
+
+include(":display-control", ":mua")
