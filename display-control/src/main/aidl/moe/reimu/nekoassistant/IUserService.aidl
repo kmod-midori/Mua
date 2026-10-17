@@ -26,4 +26,6 @@ interface IUserService {
     boolean injectTapOnDisplay(int displayId, float x, float y) = 17;
     boolean injectKeyOnDisplay(int displayId, int keyCode) = 18;
     int[] getMainDisplayMetrics() = 19;
+    String getRecentTasksJson() = 20;
+    void moveRecentTaskToDisplay(int taskId, int displayId) = 21;
 }

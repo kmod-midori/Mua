@@ -9,7 +9,7 @@ class ToolCatalogTest {
         .validate(Json.parseToJsonElement(args).jsonObject)
 
     @Test fun requiredArgumentsMatchAdvertisedSchemas() {
-        assertEquals(10, ToolCatalog.specs.size)
+        assertEquals(12, ToolCatalog.specs.size)
         ToolCatalog.specs.forEach { spec ->
             assertEquals(spec.properties.keys, spec.schema().required?.toSet())
             assertEquals(spec.properties, spec.schema().properties)
@@ -36,6 +36,8 @@ class ToolCatalogTest {
         validate("app_launch", """{"displayId":7,"package":"com.android.settings"}""")
         validate("screenshot", """{"displayId":7}""")
         validate("displays_list", "{}")
+        validate("recent_tasks_list", "{}")
+        validate("recent_task_move", """{"taskId":42,"displayId":7}""")
     }
     @Test fun displayStartDoesNotAcceptSizeOrDensityOverrides() {
         for (args in listOf("{\"width\":720}", "{\"height\":1280}", "{\"dpi\":240}")) {
@@ -45,6 +47,7 @@ class ToolCatalogTest {
 
     @Test fun displayToolsRequireAnExplicitPositiveId() {
         val examples = mapOf(
+            "recent_task_move" to "{\"taskId\":42}",
             "display_stop" to "{}", "screenshot" to "{}", "focused_app" to "{}",
             "tap" to "{\"x\":1,\"y\":2}",
             "swipe" to "{\"x1\":1,\"y1\":1,\"x2\":2,\"y2\":2,\"durationMs\":100}",
@@ -57,6 +60,15 @@ class ToolCatalogTest {
                 assertThrows(Exception::class.java) { validate(name, invalid.toString()) }
             }
         }
+    }
+
+    @Test fun recentTaskMoveRequiresAnIntegerTaskId() {
+        for (id in listOf("-1", "1.5", "null", "\"42\"")) {
+            assertThrows(Exception::class.java) {
+                validate("recent_task_move", "{\"displayId\":7,\"taskId\":$id}")
+            }
+        }
+        assertThrows(Exception::class.java) { validate("recent_task_move", "{\"displayId\":7}") }
     }
 
 }

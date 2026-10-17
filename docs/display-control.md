@@ -41,3 +41,10 @@ multiple displays; release each with `releaseDisplay(id)`. The host tracks captu
 resources, while the privileged service queries Android tasks for app placement.
 The original transactions 1–9 retain the legacy default-display API used by the
 assistant. New methods use separate transaction codes; do not renumber either set.
+
+`getRecentTasksJson()` queries Android’s current-user recent tasks without storing
+a local task registry. `moveRecentTaskToDisplay(taskId, displayId)` uses
+`startActivityFromRecents` with launch-display options and verifies the task’s
+destination through Android. The duplicate-app guard only checks focused tasks’
+top activities on other displays, excluding the source task during a move.
+Background tasks do not block launches or moves.

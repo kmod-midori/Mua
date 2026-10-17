@@ -72,6 +72,7 @@ class McpService : Service() {
             }
             server?.start()
             running = true
+            previewService = this
         } catch (e: Exception) {
             destroying = true
             android.util.Log.e("MuaMcp", "Server startup failed", e)
@@ -123,6 +124,7 @@ class McpService : Service() {
 
     override fun onDestroy() {
         destroying = true
+        if (previewService === this) previewService = null
         getSystemService(android.hardware.display.DisplayManager::class.java).unregisterDisplayListener(displayListener)
         running = false
         setDisplayCount(0)
@@ -149,6 +151,26 @@ class McpService : Service() {
     }
 
     companion object {
+        // Accessed only from main; capture work stays on the serialized control executor.
+        private var previewService: McpService? = null
+        internal fun requestPreviews(callback: (List<DisplayPreview>) -> Unit) {
+            val service = previewService
+            if (service == null || service.destroying) {
+                callback(emptyList())
+                return
+            }
+            service.worker.execute {
+                val previews = try {
+                    if (service.destroying) emptyList() else service.display.previews()
+                } catch (e: Exception) {
+                    android.util.Log.w("MuaMcp", "Could not capture previews", e)
+                    emptyList()
+                }
+                Handler(Looper.getMainLooper()).post {
+                    callback(if (service.destroying) emptyList() else previews)
+                }
+            }
+        }
         @Volatile internal var displayPowerStatus = DisplayPowerStatus()
             private set
         @Volatile var status = "Stopped"

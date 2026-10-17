@@ -14,6 +14,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -23,6 +28,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -49,6 +56,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
@@ -71,6 +80,22 @@ class MainActivity : ComponentActivity() {
     private var batteryExempt by mutableStateOf(false)
     private var shizukuAvailable by mutableStateOf(false)
     private var shizukuGranted by mutableStateOf(false)
+    private var previews by mutableStateOf(emptyList<DisplayPreview>())
+    private var previewGeneration = 0
+    private var previewVisible = false
+    private val refreshPreviews = object : Runnable {
+        override fun run() {
+            if (!previewVisible) return
+            val generation = previewGeneration
+            McpService.requestPreviews { frames ->
+                if (previewVisible && generation == previewGeneration) {
+                    previews = frames
+                    // At most one request in flight; never queue behind slow MCP operations.
+                    handler.postDelayed(this, 200)
+                }
+            }
+        }
+    }
     private val refresh = object : Runnable {
         override fun run() {
             networkAddresses = deviceNetworkAddresses()
@@ -142,6 +167,26 @@ class MainActivity : ComponentActivity() {
                             Text(if (shizukuAvailable) "Shizuku not granted" else "Shizuku unavailable",
                                 style = MaterialTheme.typography.titleMedium)
                             Text("Shizuku permission required for virtual displays")
+                        }
+                    }
+                }
+                if (previews.isNotEmpty()) item {
+                    SectionCard("Virtual displays") {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(previews, key = { it.displayId }) { preview ->
+                                Column(Modifier.width(160.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Display ${preview.displayId}", style = MaterialTheme.typography.titleMedium)
+                                    Box(Modifier.fillMaxWidth().aspectRatio(preview.width.toFloat() / preview.height)
+                                        .background(Color.Black), contentAlignment = Alignment.Center) {
+                                        val bitmap = preview.bitmap
+                                        if (bitmap == null) Text("Waiting for frame", color = Color.White,
+                                            style = MaterialTheme.typography.bodySmall)
+                                        else Image(bitmap.asImageBitmap(), "Live preview of display ${preview.displayId}",
+                                            modifier = Modifier.fillMaxSize())
+                                    }
+                                    Text("${preview.width} × ${preview.height}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
                         }
                     }
                 }
@@ -265,8 +310,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() { super.onResume(); refresh.run() }
-    override fun onPause() { handler.removeCallbacks(refresh); super.onPause() }
+    override fun onResume() {
+        super.onResume()
+        refresh.run()
+        previewVisible = true
+        refreshPreviews.run()
+    }
+    override fun onPause() {
+        previewVisible = false
+        previewGeneration++
+        handler.removeCallbacks(refreshPreviews)
+        previews = emptyList()
+        handler.removeCallbacks(refresh)
+        super.onPause()
+    }
 }
 
 @Composable

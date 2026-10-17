@@ -39,10 +39,12 @@ internal object ToolCatalog {
     val specs = listOf(
         spec("display_start", "Create an additional background display using the main display's pixel dimensions and DPI; return displayId and dimensions. Up to 4 displays, 16 megapixels total."),
         spec("displays_list", "List managed display IDs, dimensions, and focused packages from Android."),
+        spec("recent_tasks_list", "List the current user's Android recent tasks with taskId, title (exact task label, falling back to app label), displayId, isRunning, package and base/top activities. Historical display IDs may be inactive."),
+        spec("recent_task_move", "Move or restore a recent task to a managed virtual display and bring it to the front. Blocks only if another task of the app is in front on another display.", displayId, "taskId" to number(0, Int.MAX_VALUE, true)),
         spec("display_stop", "Stop the specified display and release its apps and capture buffers.", displayId),
         spec("screenshot", "Return the specified display frame as a PNG image. Retry if the first frame is not ready.", displayId),
         spec("apps_list", "List launchable packages on this device."),
-        spec("app_launch", "Launch a package on the specified display. Rejects packages with an Android task on another display.", displayId, "package" to buildJsonObject { put("type", "string") }),
+        spec("app_launch", "Launch a package on the specified display. Blocks only if the app is in front on another display.", displayId, "package" to buildJsonObject { put("type", "string") }),
         spec("focused_app", "Get the focused package on the specified display.", displayId),
         spec("tap", "Tap native display coordinates.", displayId, "x" to number(0, Int.MAX_VALUE), "y" to number(0, Int.MAX_VALUE)),
         spec("swipe", "Swipe between native display coordinates.", displayId,

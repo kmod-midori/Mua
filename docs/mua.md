@@ -25,6 +25,17 @@ device's current network IPv4 endpoints in all-interfaces mode. Each endpoint ha
 a copy icon button beside its URL. When no network IPv4 address is available, the
 card prompts you to connect to a network. Addresses refresh while the app is open.
 
+## Live display previews
+
+The main screen shows a horizontally scrollable preview for each managed display,
+labeled with its Android display ID and pixel dimensions. Previews refresh up to
+five times per second while the activity is resumed and pause when it leaves the
+foreground. Frames are sampled directly from the capture buffer into thumbnails
+with a maximum edge of 480 pixels;
+unchanged frames reuse their cached thumbnail. MCP screenshots retain their native
+resolution. Preview capture shares the control queue, so long-running MCP operations temporarily delay updates without building
+up queued preview requests.
+
 ## Screen-off operation
 
 While a virtual display is active, mua holds a `PARTIAL_WAKE_LOCK` tagged
@@ -59,7 +70,9 @@ override is used.
 | `displays_list` | None | Managed display IDs, dimensions, DPI, and system-reported focused packages |
 | `display_stop` | `displayId` | Releases that display and its capture buffers |
 | `apps_list` | None | Launchable packages and labels |
-| `app_launch` | `displayId`, `package` | Launches on the selected display, rejecting tasks on other displays |
+| `recent_tasks_list` | None | Current user’s recent tasks with task ID, title, display ID, running state, package, and base/top activities |
+| `recent_task_move` | `taskId`, `displayId` | Moves or restores a recent task onto a managed virtual display and brings it to the front |
+| `app_launch` | `displayId`, `package` | Launches on the selected display |
 | `focused_app` | `displayId` | System-reported focused package, if any |
 | `screenshot` | `displayId` | PNG image content at native display resolution |
 | `tap` | `displayId`, `x`, `y` | Tap at native display coordinates |
@@ -74,13 +87,29 @@ Display IDs come from Android, may change after recreation, and must be supplied
 explicitly to every display-specific tool. Physical and unknown IDs are rejected.
 
 `app_launch` queries Android’s current tasks before and after launch; it keeps no
-app-placement registry. A package with a task on another display, including the
-physical display, is rejected even if backgrounded. An existing task on the target
-is reused. The check uses task base/top activities and base intents, and fails if
-the system query or launch confirmation fails. It guards launches through this
-tool; system or external launches are not intercepted. Some apps reject secondary
+app-placement registry. An existing task on the target is reused. Tasks belonging
+to the same app may occupy other displays in the background. Launches and moves
+are blocked only when Android reports another focused task whose top activity
+belongs to the same app on another display. The task being moved is excluded.
+Android and the app’s activity launch modes determine whether multiple tasks are supported. Some apps reject secondary
 displays, and hidden Android APIs vary by device. Task confirmation does not
 promise that the app has rendered its first frame.
+
+`recent_tasks_list` reads Android’s Recents list, including historical tasks.
+Its `title` preserves the exact task-description label, falling back to the app’s
+label when no custom title is set. It is null if neither label is available (for
+example, a historical task whose app is no longer installed).
+Their reported display IDs may no longer be active. `recent_task_move` uses the
+returned task ID and a destination from `displays_list`; it can move a task from
+the physical display or another virtual display, or restore an inactive task.
+Android must confirm the same task ID on the destination before success is
+reported. If the move fails a subsequent check, mua restores the task to its source
+display before returning the error. A previously inactive task has no source
+display, so it is restored on the main display instead. If restoration fails, the
+error explicitly asks the client to refresh the task’s location. Other tasks
+belonging to the app may remain on other displays.
+Apps or device policy may prevent a move. Moving/restoring can resume the app, and stopping its destination
+display later destroys its activities, just like other apps on that display.
 
 Coordinates start at `(0, 0)` and must be smaller than the selected display’s
 dimensions. Screenshots own their pixels and do not expose a shared mutable

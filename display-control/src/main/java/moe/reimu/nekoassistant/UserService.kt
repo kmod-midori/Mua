@@ -5,10 +5,12 @@ import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.hardware.input.InputManager
 import android.os.Build
+import android.os.Bundle
 import android.os.IInterface
 import android.os.SystemClock
 import android.util.Log
@@ -19,11 +21,14 @@ import android.view.InputEvent
 import android.view.MotionEvent
 import android.view.Surface
 import androidx.annotation.Keep
+import moe.reimu.displaycontrol.taskMoveWithRollback
 import moe.reimu.nekoassistant.wrappers.ActivityManagerWrapper
 import moe.reimu.nekoassistant.wrappers.FakeContext
 import moe.reimu.nekoassistant.wrappers.ServiceManager
 import java.lang.reflect.Method
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.random.Random
 import kotlin.system.exitProcess
 
@@ -196,8 +201,114 @@ class UserService : IUserService.Stub() {
         return getGetTasksMethod(am).invoke(am, Int.MAX_VALUE) as List<ActivityManager.RunningTaskInfo>
     }
 
+    private val activityTaskManager by lazy {
+        ServiceManager.getService("activity_task", "android.app.IActivityTaskManager")
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun recentTasks(): List<ActivityManager.RecentTaskInfo> {
+        val userId = ActivityManager::class.java.getMethod("getCurrentUser").invoke(null) as Int
+        val manager = activityTaskManager
+        val slice = manager.javaClass.getMethod("getRecentTasks", Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+            .invoke(manager, Int.MAX_VALUE, 0, userId)
+        return slice.javaClass.getMethod("getList").invoke(slice) as List<ActivityManager.RecentTaskInfo>
+    }
+
+    @Synchronized
+    override fun getRecentTasksJson(): String = JSONArray().apply {
+        val displayField = ActivityManager.RecentTaskInfo::class.java.getField("displayId")
+        val userField = ActivityManager.RecentTaskInfo::class.java.getField("userId")
+        val pm = FakeContext.getInstance().packageManager
+        recentTasks().forEach { task ->
+            val pkg = task.baseActivity?.packageName ?: task.baseIntent.component?.packageName
+                ?: task.baseIntent.`package`
+            val title = task.taskDescription?.label?.takeIf { it.isNotEmpty() } ?: pkg?.let {
+                try {
+                    val info = pm.javaClass.getMethod("getApplicationInfoAsUser", String::class.java,
+                        Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+                        .invoke(pm, it, 0, userField.getInt(task)) as ApplicationInfo
+                    pm.getApplicationLabel(info).toString()
+                } catch (e: Exception) {
+                    // Removed/unavailable packages must not prevent listing the remaining tasks.
+                    Log.w(TAG, "Could not load app label for $it", e)
+                    null
+                }
+            }
+            put(JSONObject().apply {
+                put("taskId", task.taskId)
+                put("title", title ?: JSONObject.NULL)
+                put("displayId", displayField.getInt(task))
+                put("isRunning", task.isRunning)
+                put("baseActivity", task.baseActivity?.flattenToShortString() ?: JSONObject.NULL)
+                put("topActivity", task.topActivity?.flattenToShortString() ?: JSONObject.NULL)
+                put("package", pkg ?: JSONObject.NULL)
+            })
+        }
+    }.toString()
+
+    @Synchronized
+    override fun moveRecentTaskToDisplay(taskId: Int, displayId: Int) {
+        requireDisplay(displayId)
+        val task = recentTasks().firstOrNull { it.taskId == taskId }
+            ?: error("Unknown recent task: $taskId. Refresh recent_tasks_list.")
+        val pkg = task.topActivity?.packageName ?: task.baseIntent.component?.packageName
+            ?: task.baseIntent.`package`
+        val before = runningTasks()
+        checkForegroundConflict(before, pkg, displayId, taskId)
+        val sourceDisplayId = before.firstOrNull { it.taskId == taskId }?.let { taskDisplayIdField.getInt(it) }
+            ?.takeIf { it >= 0 }
+        val restoreDisplayId = sourceDisplayId ?: Display.DEFAULT_DISPLAY
+        taskMoveWithRollback(restoreDisplayId, sourceDisplayId == null, moveAndVerify = {
+            startRecentTask(taskId, displayId)
+            awaitFocusedTask(taskId, displayId) { current ->
+                checkForegroundConflict(current, pkg, displayId, taskId)
+            }
+        }, restoreAndVerify = {
+            // Moving the top task may reveal another foreground task of the same app underneath it.
+            startRecentTask(taskId, restoreDisplayId)
+            awaitFocusedTask(taskId, restoreDisplayId)
+        })
+    }
+
+    private fun startRecentTask(taskId: Int, displayId: Int) {
+        val options = ActivityOptions.makeBasic().apply { launchDisplayId = displayId }
+        val manager = activityTaskManager
+        val result = manager.javaClass.getMethod("startActivityFromRecents", Int::class.javaPrimitiveType,
+            Bundle::class.java).invoke(manager, taskId, options.toBundle()) as Int
+        check(result >= 0) { "Android rejected task move (result $result)" }
+    }
+
+    private fun awaitFocusedTask(
+        taskId: Int, displayId: Int, checkSnapshot: (List<ActivityManager.RunningTaskInfo>) -> Unit = {},
+    ) {
+        val deadline = SystemClock.uptimeMillis() + 3000
+        var confirmed = false
+        do {
+            val current = runningTasks()
+            checkSnapshot(current)
+            val focused = current.any { it.taskId == taskId && taskDisplayIdField.getInt(it) == displayId &&
+                taskFocusedField.getBoolean(it) }
+            // Require a second snapshot after focus has settled, not just task reparenting.
+            if (focused && confirmed) return
+            confirmed = focused
+            SystemClock.sleep(50)
+        } while (SystemClock.uptimeMillis() < deadline)
+        error("Android did not confirm focused task $taskId on display $displayId")
+    }
+
     private val taskDisplayIdField by lazy { ActivityManager.RunningTaskInfo::class.java.getField("displayId") }
     private val taskFocusedField by lazy { ActivityManager.RunningTaskInfo::class.java.getField("isFocused") }
+    private fun checkForegroundConflict(
+        tasks: List<ActivityManager.RunningTaskInfo>, pkg: String?, displayId: Int, movingTaskId: Int? = null,
+    ) {
+        if (pkg == null) return
+        val conflict = tasks.firstOrNull {
+            it.taskId != movingTaskId && taskDisplayIdField.getInt(it) != displayId &&
+                taskFocusedField.getBoolean(it) && it.topActivity?.packageName == pkg
+        }
+        check(conflict == null) { "App $pkg is in front on display ${taskDisplayIdField.getInt(conflict)}" }
+    }
     private fun taskContainsPackage(task: ActivityManager.RunningTaskInfo, pkg: String) =
         task.baseActivity?.packageName == pkg || task.topActivity?.packageName == pkg ||
             task.baseIntent.component?.packageName == pkg || task.baseIntent.`package` == pkg
@@ -207,8 +318,7 @@ class UserService : IUserService.Stub() {
         requireDisplay(displayId)
         val pkg = requireNotNull(intent.component?.packageName) { "Launch requires an explicit activity" }
         val tasks = runningTasks()
-        val conflict = tasks.firstOrNull { taskContainsPackage(it, pkg) && taskDisplayIdField.getInt(it) != displayId }
-        check(conflict == null) { "App $pkg already has a task on display ${taskDisplayIdField.getInt(conflict)}" }
+        checkForegroundConflict(tasks, pkg, displayId)
         val options = ActivityOptions.makeBasic().apply { launchDisplayId = displayId }
         val existing = tasks.firstOrNull { taskContainsPackage(it, pkg) && taskDisplayIdField.getInt(it) == displayId }
         val launch = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -223,9 +333,9 @@ class UserService : IUserService.Stub() {
         // A failed query or unconfirmed launch fails closed rather than recording guessed ownership.
         val deadline = SystemClock.uptimeMillis() + 3000
         do {
-            val current = runningTasks().filter { taskContainsPackage(it, pkg) }
-            check(current.none { taskDisplayIdField.getInt(it) != displayId }) { "App $pkg appeared on another display during launch" }
-            if (current.any { taskDisplayIdField.getInt(it) == displayId }) return
+            val current = runningTasks()
+            checkForegroundConflict(current, pkg, displayId)
+            if (current.any { taskContainsPackage(it, pkg) && taskDisplayIdField.getInt(it) == displayId }) return
             SystemClock.sleep(50)
         } while (SystemClock.uptimeMillis() < deadline)
         error("Android did not confirm a task for $pkg on display $displayId")

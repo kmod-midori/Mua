@@ -44,6 +44,7 @@ internal class DisplayTools(
             }.toString())
         }
         val service = checkNotNull(remote) { "Shizuku is not connected. Grant permission in mua and start Shizuku." }
+        if (name == "recent_tasks_list") return textContent(service.recentTasksJson)
         reconcile(service)
         fun int(key: String) = args.getValue(key).jsonPrimitive.int
         if (name == "display_start") {
@@ -89,6 +90,11 @@ internal class DisplayTools(
             return value
         }
         when (name) {
+            "recent_task_move" -> {
+                val taskId = int("taskId")
+                service.moveRecentTaskToDisplay(taskId, id)
+                return textContent("Moved task $taskId to display $id")
+            }
             "display_stop" -> {
                 check(service.releaseDisplay(id)) { "Failed to stop display $id" }
                 removeCapture(id)
@@ -121,6 +127,15 @@ internal class DisplayTools(
     }
 
     fun refreshDisplays() { remote?.let(::reconcile) }
+
+    fun previews(): List<DisplayPreview> {
+        val service = remote ?: return emptyList()
+        reconcile(service)
+        return captures.map { (id, capture) ->
+            val bitmap = capture.frames.previewBitmap(480)
+            DisplayPreview(id, capture.width, capture.height, bitmap)
+        }
+    }
 
     private fun reconcile(service: IUserService) {
         val ids = service.displayIds.toSet()

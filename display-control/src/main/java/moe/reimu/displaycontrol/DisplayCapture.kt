@@ -14,6 +14,11 @@ class DisplayCapture(width: Int, height: Int, handler: Handler, onFrame: () -> U
     private val lock = Any()
     private var closed = false
     private var image: Image? = null
+    private var frameVersion = 0L
+    private var previewVersion = -1L
+    private var previewMaxEdge = 0
+    private var preview: Bitmap? = null
+    private var previewPixels: IntArray? = null
     private val reader = ImageReader.newInstance(
         width, height, PixelFormat.RGBA_8888, 4,
         HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
@@ -27,6 +32,7 @@ class DisplayCapture(width: Int, height: Int, handler: Handler, onFrame: () -> U
                 val next = source.acquireLatestImage() ?: return@synchronized false
                 image?.close()
                 image = next
+                frameVersion++
                 true
             }
             // Never call host code while holding the image lock.
@@ -53,12 +59,36 @@ class DisplayCapture(width: Int, height: Int, handler: Handler, onFrame: () -> U
         }
     }
 
+    /** Shared immutable thumbnail. Callers must not mutate or recycle it. */
+    fun previewBitmap(maxEdge: Int): Bitmap? = synchronized(lock) {
+        require(maxEdge > 0)
+        val frame = image ?: return@synchronized null
+        if (previewVersion == frameVersion && previewMaxEdge == maxEdge) return@synchronized preview
+        val crop = frame.cropRect
+        val ratio = minOf(1f, maxEdge.toFloat() / maxOf(crop.width(), crop.height()))
+        val width = (crop.width() * ratio).toInt().coerceAtLeast(1)
+        val height = (crop.height() * ratio).toInt().coerceAtLeast(1)
+        val plane = frame.planes[0]
+        val pixels = samplePreviewPixels(plane.buffer, plane.rowStride, plane.pixelStride,
+            crop.left, crop.top, crop.width(), crop.height(), width, height)
+        if (preview?.width != width || preview?.height != height || !pixels.contentEquals(previewPixels)) {
+            // Never recycle the previous thumbnail: Compose may still be drawing it.
+            preview = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+            previewPixels = pixels
+        }
+        previewVersion = frameVersion
+        previewMaxEdge = maxEdge
+        preview
+    }
+
     override fun close() = synchronized(lock) {
         if (!closed) {
             closed = true
             reader.setOnImageAvailableListener(null, null)
             image?.close()
             image = null
+            preview = null
+            previewPixels = null
             reader.close()
         }
     }

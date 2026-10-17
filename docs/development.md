@@ -4,7 +4,7 @@ Run commands from the repository root.
 
 ```sh
 ./gradlew :app:assembleDebug :mua:assembleDebug
-./gradlew :app:testDebugUnitTest :mua:testDebugUnitTest
+./gradlew :app:testDebugUnitTest :mua:testDebugUnitTest :display-control:testDebugUnitTest
 ./gradlew :display-control:lintDebug :mua:lintDebug
 ```
 
@@ -23,9 +23,17 @@ Android APIs, display rendering, input routing, or system power behavior.
   DPI match the main display. Check independent screenshots, taps, swipes, and key
   presses by ID, plus rejection of unknown IDs and size overrides. Check the
   original assistant’s preview as well.
-- Verify duplicate app launches are rejected across displays, including physical
-  and background tasks. Close a task externally and verify the next launch uses
-  fresh system state. Exercise display count and total-pixel limits.
+- Verify launches and moves allow background tasks of the same app on other
+  displays, but reject another focused task with that app’s top activity.
+  Close a task externally and verify the next launch uses fresh system state.
+  Exercise display count and total-pixel limits.
+- List recent tasks, restore an inactive task, and move a live task between virtual
+  displays. Verify the task ID stays the same, destination is confirmed by Android,
+  and unknown tasks and invalid destinations are rejected.
+- Stack two tasks of the same app on one display, then move the top task to another
+  display. A foreground conflict revealed on the source must restore the moved
+  task before returning an error. Check preview colors/crops and live updates;
+  unchanged frames should reuse their thumbnail without full-resolution copies.
 - Check that an idle MCP server holds no wake lock, an active display holds one,
   stopping one of several preserves it, and stopping the last display or
   disconnecting Shizuku releases it. The main UI and
