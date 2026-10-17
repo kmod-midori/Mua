@@ -88,6 +88,11 @@ released. Tags name the release and artifacts; they do not change Android
 version codes/names or the Python package version. Update those separately when
 needed. Server images target the runner's Linux amd64 architecture.
 
+The newest numeric `mua-server-x.x.x` Git tag also publishes the same image digest
+as `latest`. Older releases keep their version-specific tag without moving
+`latest` backward. Server release jobs are serialized and check remote tags
+after the image build. GitHub releases remain drafts.
+
 For Android releases, configure these repository Actions secrets:
 
 - `ANDROID_KEYSTORE_BASE64`: base64-encoded contents of the release keystore.
