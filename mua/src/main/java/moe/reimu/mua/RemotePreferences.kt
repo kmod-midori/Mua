@@ -1,12 +1,16 @@
 package moe.reimu.mua
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.provider.Settings
 import androidx.core.content.edit
-import java.util.UUID
 
+@SuppressLint("HardwareIds") // Default server device identity; editable by the user, not used for tracking.
 internal fun Context.loadRemoteConfig(): RemoteConfig {
     val prefs = getSharedPreferences("remote", Context.MODE_PRIVATE)
-    val id = prefs.getString("deviceId", null) ?: UUID.randomUUID().toString().also {
+    val id = prefs.getString("deviceId", null) ?: Settings.Secure.getString(
+        contentResolver, Settings.Secure.ANDROID_ID,
+    ).orEmpty().also {
         prefs.edit { putString("deviceId", it) }
     }
     return RemoteConfig(prefs.getBoolean("enabled", false), prefs.getString("url", "")!!,

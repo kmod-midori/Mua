@@ -58,8 +58,8 @@ Android APIs, display rendering, input routing, or system power behavior.
   unchanged frames should reuse their thumbnail without full-resolution copies.
 - Check that an idle MCP server holds no wake lock, an active display holds one,
   stopping one of several preserves it, and stopping the last display or
-  disconnecting Shizuku releases it. The main UI and
-  notification should report the same state.
+  disconnecting Shizuku releases it. The main UI and notification should report
+  the same active display count.
 - Verify both listener modes, port validation, and rejection of old tokens after
   reset. Network-mode clients connect to the device’s IP, without forwarding.
 - Test screen-off rendering separately from Doze. A charging device does not

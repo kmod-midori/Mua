@@ -5,7 +5,8 @@ See the [quick start](../mua/README.md) for installation and initial setup.
 ## Connection and authorization
 
 The default is `127.0.0.1:8765`, for on-device clients. Select `0.0.0.0` to listen
-on all IPv4 interfaces. Remote clients use `http://<device-ip>:<port>/mcp`, not
+on all IPv4 interfaces. Ports must be 1024–65535. Valid settings save automatically.
+Remote clients use `http://<device-ip>:<port>/mcp`, not
 `0.0.0.0`. Both modes require the bearer token. HTTP is unencrypted; use network
 access on trusted networks. No forwarding or ADB integration is included.
 
@@ -20,10 +21,18 @@ All authorized clients share the managed displays and a serialized operation que
 Stopping or losing Shizuku discards captured frames; after reconnection create a
 new display. Android may stop the foreground service; restart it manually.
 
-The **Client connection** card shows the loopback endpoint in local mode, or the
+The **MCP server** card shows the loopback endpoint in local mode, or the
 device's current network IPv4 endpoints in all-interfaces mode. Each endpoint has
 a copy icon button beside its URL. When no network IPv4 address is available, the
 card prompts you to connect to a network. Addresses refresh while the app is open.
+
+Stop mua before changing connection settings or toggles. Each connection has an
+independent switch selecting whether it starts with the service. The local address
+and port appear together, with an address dropdown. Both connections use one
+Shizuku connection, display registry, operation queue, and display-dependent CPU
+wake lock. **Stop mua** shuts down the shared backend and releases displays.
+A failed local listener does not stop the central connection, and a failed central
+connection does not stop local MCP.
 
 ## Live display previews
 
@@ -45,8 +54,9 @@ the lock only if other displays remain active. Android
 also releases it if the process dies. A running MCP server with no display holds
 no wake lock. Stop the display when finished: an active display keeps the CPU
 awake even between requests. The foreground notification includes a Stop action.
-The notification and main screen's MCP server card show the same active display count and
-CPU wake-lock status. The screen refreshes while visible and when resumed.
+The notification and main screen show the active display count. When the central
+connection is enabled, the notification also shows its live connection status.
+The screen refreshes while visible and when resumed.
 
 For long unplugged sessions, open **Battery optimization settings** in mua,
 show all apps, and exempt mua. The setup card disappears once mua is exempt.

@@ -5,13 +5,11 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.ViewModelProvider
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.Image
@@ -30,7 +28,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
@@ -43,7 +40,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Switch
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.Scaffold
@@ -61,75 +61,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import rikka.shizuku.Shizuku
 
 class MainActivity : ComponentActivity() {
-    private val handler = Handler(Looper.getMainLooper())
-    private var listenAddress by mutableStateOf("127.0.0.1")
-    private var portText by mutableStateOf("8765")
-    private var networkAddresses by mutableStateOf(emptyList<String>())
-    private val validPort: Int? get() = portText.toIntOrNull()?.takeIf { it in 1024..65535 }
-    private fun saveListenerIfValid() {
-        validPort?.let { saveListenerConfig(ListenerConfig(listenAddress, it)) }
-    }
-    private var remoteConfig by mutableStateOf(RemoteConfig())
-    private var remoteStatus by mutableStateOf("Stopped")
-    private val remoteError: String? get() = runCatching { remoteConfig.validate() }.exceptionOrNull()?.message
-    private fun updateRemote(config: RemoteConfig) {
-        remoteConfig = config
-        saveRemoteConfig(config)
-    }
-    private var running by mutableStateOf(false)
-    private var displayPowerStatus by mutableStateOf(DisplayPowerStatus())
-    private var status by mutableStateOf("Stopped")
-    private var batteryExempt by mutableStateOf(false)
-    private var shizukuAvailable by mutableStateOf(false)
-    private var shizukuGranted by mutableStateOf(false)
-    private var previews by mutableStateOf(emptyList<DisplayPreview>())
-    private var previewGeneration = 0
-    private var previewVisible = false
-    private val refreshPreviews = object : Runnable {
-        override fun run() {
-            if (!previewVisible) return
-            val generation = previewGeneration
-            McpService.requestPreviews { frames ->
-                if (previewVisible && generation == previewGeneration) {
-                    previews = frames
-                    // At most one request in flight; never queue behind slow MCP operations.
-                    handler.postDelayed(this, 200)
-                }
-            }
-        }
-    }
-    private val refresh = object : Runnable {
-        override fun run() {
-            networkAddresses = deviceNetworkAddresses()
-            shizukuAvailable = Shizuku.pingBinder()
-            // The binder can disappear between checking availability and permission.
-            shizukuGranted = shizukuAvailable && runCatching {
-                Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
-            }.getOrDefault(false)
-            running = McpService.running
-            remoteStatus = McpService.remoteStatus
-            displayPowerStatus = McpService.displayPowerStatus
-            status = if (running) McpService.status else
-                McpService.status.takeIf { it.startsWith("Server failed:") } ?: "Stopped"
-            batteryExempt = getSystemService(PowerManager::class.java)
-                .isIgnoringBatteryOptimizations(packageName)
-            handler.postDelayed(this, 1000)
-        }
-    }
+    private val viewModel by lazy { ViewModelProvider(this)[MainViewModel::class.java] }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        remoteConfig = loadRemoteConfig()
-        val listener = loadListenerConfig()
-        listenAddress = listener.address
-        portText = listener.port.toString()
         enableEdgeToEdge()
         setContent {
             // Same Material 3 dynamic palette, typography and default shapes as
@@ -149,7 +92,7 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    private fun MainPage() {
+    private fun MainPage() = with(viewModel) {
         Scaffold(topBar = { TopAppBar(title = { Text("mua") }) }) { padding ->
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
@@ -202,55 +145,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 item {
-                    SectionCard("MCP server") {
-                        Text(if (running) "Listening on $listenAddress:$portText" else "Server stopped",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary)
+                    SectionCard("mua") {
                         Text(status, style = MaterialTheme.typography.bodyMedium)
-                        Text(displayPowerStatus.displayLabel, style = MaterialTheme.typography.bodyMedium)
-                        Text(displayPowerStatus.cpuLabel, style = MaterialTheme.typography.bodyMedium,
-                            color = if (displayPowerStatus.cpuKeptAwake) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Listening address", style = MaterialTheme.typography.labelLarge)
-                        ListenerConfig.ADDRESSES.forEach { address ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().selectable(
-                                    selected = listenAddress == address,
-                                    enabled = !running,
-                                    role = Role.RadioButton,
-                                    onClick = { listenAddress = address; saveListenerIfValid() },
-                                ),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(selected = listenAddress == address, onClick = null,
-                                    enabled = !running, modifier = Modifier.padding(12.dp))
-                                Text(if (address == "127.0.0.1") "$address · This device" else "$address · All interfaces")
-                            }
-                        }
-                        OutlinedTextField(
-                            value = portText,
-                            onValueChange = { portText = it; saveListenerIfValid() },
-                            label = { Text("Port") },
-                            supportingText = { Text(if (running) "Stop mua to change the address or port" else "1024–65535") },
-                            isError = validPort == null,
-                            enabled = !running,
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (listenAddress == "0.0.0.0") {
-                            Text("Accepts connections on the device’s network interfaces. Clients need the bearer token; HTTP traffic is unencrypted.",
-                                style = MaterialTheme.typography.bodySmall)
-                        }
+                        Text(displayPowerStatus.summary, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(
-                            enabled = running || (validPort != null && remoteError == null),
+                            enabled = running || ((!localEnabled || validPort != null) && remoteError == null),
                             onClick = { perform {
-                                if (running) stopService(Intent(this@MainActivity, McpService::class.java))
+                                if (running) stop()
                                 else {
-                                    saveListenerIfValid()
                                     if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
                                         requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
-                                    startForegroundService(Intent(this@MainActivity, McpService::class.java))
+                                    start()
                                 }
                             } },
                             modifier = Modifier.fillMaxWidth(),
@@ -258,15 +164,96 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 item {
-                    SectionCard("Central server") {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Connect to central server", modifier = Modifier.weight(1f))
-                            Switch(checked = remoteConfig.enabled, enabled = !running,
-                                onCheckedChange = { updateRemote(remoteConfig.copy(enabled = it)) })
+                    SectionCard("MCP server", trailing = {
+                        Switch(checked = localEnabled, enabled = !running,
+                            modifier = Modifier.semantics { contentDescription = "Local MCP server" }, onCheckedChange = { enabled -> perform {
+                            updateLocalEnabled(enabled)
+                        } })
+                    }) {
+                        Text(if (running) localStatus else if (localEnabled) "Ready · Streamable HTTP" else "Disabled",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.Top) {
+                                var addressExpanded by remember { mutableStateOf(false) }
+                                ExposedDropdownMenuBox(expanded = addressExpanded,
+                                    onExpandedChange = { if (!running) addressExpanded = it },
+                                    modifier = Modifier.weight(1f)) {
+                                    OutlinedTextField(value = listenAddress, onValueChange = {}, readOnly = true,
+                                        label = { Text("Address") }, singleLine = true, enabled = !running,
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(addressExpanded) },
+                                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                                            .fillMaxWidth())
+                                    ExposedDropdownMenu(expanded = addressExpanded,
+                                        onDismissRequest = { addressExpanded = false }) {
+                                        ListenerConfig.ADDRESSES.forEach { address ->
+                                            DropdownMenuItem(text = { Text(address) }, onClick = {
+                                                updateAddress(address)
+                                                addressExpanded = false
+                                            })
+                                        }
+                                    }
+                                }
+                                OutlinedTextField(value = portText,
+                                    onValueChange = { updatePort(it) },
+                                    label = { Text("Port") }, isError = validPort == null,
+                                    enabled = !running, singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.width(104.dp))
+                            }
+                            if (validPort == null) Text("Port must be 1024–65535",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                            val endpointHosts = if (listenAddress == "0.0.0.0") networkAddresses else listOf("127.0.0.1")
+                            val port = validPort
+                            if (port == null) {
+                                Text("Enter a valid port to configure the endpoint", style = MaterialTheme.typography.bodySmall)
+                            } else if (endpointHosts.isEmpty()) {
+                                Text("No network IPv4 address available. Connect to a network to get an endpoint URL.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            } else endpointHosts.forEach { host ->
+                                val endpoint = "http://$host:$port/mcp"
+                                CopyRow(endpoint, "Copy endpoint URL: $endpoint") { perform {
+                                    getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                                        ClipData.newPlainText("mua endpoint", endpoint))
+                                    Toast.makeText(this@MainActivity, "Endpoint URL copied", Toast.LENGTH_SHORT).show()
+                                } }
+                            }
+                            Text("Authorization", style = MaterialTheme.typography.labelLarge)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(authorization, modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                IconButton(onClick = { perform {
+                                    getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                                        ClipData.newPlainText("mua authorization", authorization).apply {
+                                            if (Build.VERSION.SDK_INT >= 33) description.extras = android.os.PersistableBundle().apply {
+                                                putBoolean("android.content.extra.IS_SENSITIVE", true)
+                                            }
+                                        })
+                                    Toast.makeText(this@MainActivity, "Authorization header copied", Toast.LENGTH_SHORT).show()
+                                } }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy Authorization header") }
+                                IconButton(onClick = { perform {
+                                    resetAuthorization()
+                                    Toast.makeText(this@MainActivity, "Authorization reset. Update your clients with the new header.", Toast.LENGTH_LONG).show()
+                                } }) { Icon(Icons.Default.Refresh, contentDescription = "Reset Authorization header") }
+                            }
+                            Text(if (listenAddress == "0.0.0.0") "Network access · Unencrypted HTTP"
+                                else "On-device clients only", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(if (running) remoteStatus else "Configure while mua is stopped",
+                    }
+                }
+                item {
+                    SectionCard("Central server", trailing = {
+                        Switch(checked = remoteConfig.enabled,
+                            modifier = Modifier.semantics { contentDescription = "Central connection" },
+                            enabled = !running, onCheckedChange = { enabled -> perform {
+                            updateRemoteEnabled(enabled)
+                        } })
+                    }) {
+                        Text(if (running) remoteStatus else if (remoteConfig.enabled) "Ready" else "Disabled",
                             style = MaterialTheme.typography.bodyMedium)
-                        if (remoteConfig.enabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(value = remoteConfig.serverUrl,
                                 onValueChange = { updateRemote(remoteConfig.copy(serverUrl = it)) },
                                 label = { Text("Server URL") }, placeholder = { Text("wss://mua.example.com") },
@@ -292,56 +279,9 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxWidth())
                             remoteError?.let { Text(it, color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall) }
-                            Text("Use the same device token on every phone. Each device keeps its own ID and name. Local MCP stays available. Use wss:// for encrypted connections.",
+                            Text("Use the same device token on every phone. Each device keeps its own ID and name. Use wss:// for encrypted connections.",
                                 style = MaterialTheme.typography.bodySmall)
                         }
-                    }
-                }
-                item {
-                    SectionCard("Client connection") {
-                        val endpointHosts = if (listenAddress == "0.0.0.0") networkAddresses else listOf("127.0.0.1")
-                        val port = validPort
-                        if (port == null) {
-                            Text("Enter a valid port to configure the endpoint", style = MaterialTheme.typography.bodyLarge)
-                        } else if (endpointHosts.isEmpty()) {
-                            Text("No network IPv4 address available. Connect to a network to get an endpoint URL.",
-                                style = MaterialTheme.typography.bodyLarge)
-                        } else endpointHosts.forEach { host ->
-                            val endpoint = "http://$host:$port/mcp"
-                            CopyRow(endpoint, "Copy endpoint URL: $endpoint") { perform {
-                                getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                                    ClipData.newPlainText("mua endpoint", endpoint))
-                                Toast.makeText(this@MainActivity, "Endpoint URL copied", Toast.LENGTH_SHORT).show()
-                            } }
-                        }
-                        Text(if (listenAddress == "0.0.0.0")
-                            "Streamable HTTP · Use an address reachable from your client."
-                            else "Streamable HTTP · On-device clients only", style = MaterialTheme.typography.bodyMedium)
-                        var authorization by remember { mutableStateOf("Bearer ${McpService.accessToken(this@MainActivity)}") }
-                        Text("Authorization", style = MaterialTheme.typography.labelLarge)
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text(authorization, modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                            IconButton(onClick = { perform {
-                                getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                                    ClipData.newPlainText("mua authorization", authorization).apply {
-                                        if (Build.VERSION.SDK_INT >= 33) description.extras = android.os.PersistableBundle().apply {
-                                            putBoolean("android.content.extra.IS_SENSITIVE", true)
-                                        }
-                                    })
-                                Toast.makeText(this@MainActivity, "Authorization header copied", Toast.LENGTH_SHORT).show()
-                            } }) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy Authorization header") }
-                            IconButton(onClick = { perform {
-                                authorization = "Bearer ${McpService.resetAccessToken(this@MainActivity)}"
-                                Toast.makeText(this@MainActivity, "Authorization reset. Update your clients with the new header.", Toast.LENGTH_LONG).show()
-                            } }) { Icon(Icons.Default.Refresh, contentDescription = "Reset Authorization header") }
-                        }
-                        Text("Reset replaces the token immediately. Update connected clients with the new header.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("The token grants display control and access to recent tasks. Select a display by its ID.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (!batteryExempt) item {
@@ -363,28 +303,27 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        refresh.run()
-        previewVisible = true
-        refreshPreviews.run()
+        viewModel.startObserving()
     }
+
     override fun onPause() {
-        previewVisible = false
-        previewGeneration++
-        handler.removeCallbacks(refreshPreviews)
-        previews = emptyList()
-        handler.removeCallbacks(refresh)
+        viewModel.stopObserving()
         super.onPause()
     }
+
 }
 
 @Composable
-private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun SectionCard(title: String, trailing: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                trailing?.invoke()
+            }
             content()
         }
     }
@@ -393,7 +332,7 @@ private fun SectionCard(title: String, content: @Composable ColumnScope.() -> Un
 @Composable
 private fun CopyRow(label: String, copyDescription: String, onCopy: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
         IconButton(onClick = onCopy) {
             Icon(Icons.Default.ContentCopy, contentDescription = copyDescription)
         }

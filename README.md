@@ -20,25 +20,20 @@ Streamable HTTP.
    `mua/build/outputs/apk/debug/mua-debug.apk`.
 2. Open **mua** and grant Shizuku permission. Select `0.0.0.0` as the listening
    address to connect from another device on your network, then tap **Start mua**.
-3. Copy the endpoint URL and **Authorization** value from **Client connection**
+3. Copy the endpoint URL and **Authorization** value from **MCP server**
    into your MCP client.
-4. Call `display_start`, then use the returned `displayId` to launch apps,
-   capture screenshots, and send input.
 
-See the [mua quick start](mua/README.md) and
-[configuration and MCP tools](docs/mua.md) for details. For screen-off sessions,
-use the battery optimization setup card. mua keeps the CPU awake while virtual
-displays are active.
+For screen-off use, follow the battery optimization setup in the app.
+See [configuration and MCP tools](docs/mua.md) for more details.
 
 ## Central server
 
-The optional [mua server](server/README.md) connects devices through outbound
-WebSockets and exposes their tools through a single MCP endpoint. Use
-`devices_list` to find connected devices, then pass `deviceId` to device tools.
-The server uses FastAPI and uv and can run in Docker.
+The optional central server lets agents operate your phone **while you’re on the
+move**, over mobile data or Wi-Fi. Your phone connects to the server, so your
+agent doesn’t need to be on the same network. You can connect multiple devices
+through one MCP endpoint.
 
-See [central gateway setup](docs/mua-remote.md) for device registration,
-authentication, and deployment.
+See [central server setup](docs/mua-remote.md) to get started.
 
 ## Project modules
 

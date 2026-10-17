@@ -80,16 +80,17 @@ No persistent volume is required; devices reconnect after the container restarts
 
 ## Mobile setup
 
-1. Stop mua before editing its configuration.
-2. Enable **Connect to central server** in the **Central server** card.
+1. Stop mua before editing connection settings or toggles.
+2. Leave **MCP server** enabled if you also want local access; it is optional.
 3. Enter the base URL, such as `wss://mua.example.com` or
    `ws://192.168.1.10:8000`. A path prefix is supported when the proxy preserves
    the corresponding routing. Do not include `/mcp` or the device WebSocket path.
 4. Enter a **Device name** to identify this phone in `devices_list` (initially
-   its model name). Keep the generated **Device ID**, or choose a unique one.
+   its model name). **Device ID** defaults to Android ID; keep it or choose a unique one.
    Enter the server's `MUA_DEVICE_TOKEN` in **Shared device token**, using the same
    token on every device.
-5. Start mua. The card reports Connecting, Connected, or a reconnect countdown.
+5. Enable the **Central server** switch, then start mua. The card
+   reports Connecting, Connected, or a reconnect countdown.
 
 The device sends a protocol-v1 hello containing its configured name and tool schemas.
 The server acknowledges registration before accepting calls for it. A replacement

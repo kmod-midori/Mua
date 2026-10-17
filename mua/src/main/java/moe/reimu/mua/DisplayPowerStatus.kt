@@ -10,6 +10,5 @@ internal data class DisplayPowerStatus(
         1 -> "1 virtual display active"
         else -> "$displayCount virtual displays active"
     }
-    val cpuLabel: String get() = if (cpuKeptAwake) "CPU kept awake" else "CPU may sleep"
-    val summary: String get() = "$displayLabel • $cpuLabel"
+    val summary: String get() = displayLabel
 }

@@ -1,29 +1,19 @@
 # mua (Mobile-Using Agent)
 
-An Android app exposing Shizuku virtual displays through MCP. It uses the shared
-[display-control library](../display-control/README.md) without the assistant’s
-agent loop or harness. Requires Android 12+ and a running Shizuku installation.
+Let an AI agent work in Android apps while you use another app or keep the screen
+off. Requires Android 12+, [Shizuku](https://shizuku.rikka.app/), and an MCP client.
 
 ## Quick start
 
 1. Build with `./gradlew :mua:assembleDebug` and install
    `mua/build/outputs/apk/debug/mua-debug.apk`.
-2. Open **mua** and grant permission through the **Shizuku not granted** card.
-3. Select the listening address and port, then tap **Start mua**. The default is
-   `127.0.0.1:8765`; select `0.0.0.0` for network access. Ports must be 1024–65535.
-4. Copy an endpoint URL and the **Authorization** value from **Client connection**
-   into your MCP client. Use Streamable HTTP and send the copied `Bearer …` value
-   in the `Authorization` header. Network access uses unencrypted HTTP.
-5. Call `display_start` with no arguments. It returns a display ID and uses the
-   main display’s size and DPI. Pass `displayId` to launch, capture, input, and
-   stop tools. Use `displays_list` to find active IDs, or **Stop mua** to release all.
+2. Open **mua** and grant Shizuku permission.
+3. Select `0.0.0.0` for access from another device, then tap **Start mua**.
+4. Copy the endpoint URL and **Authorization** value from **MCP server** into
+   your MCP client. Select Streamable HTTP as the transport.
 
-Settings save automatically when valid; stop the server before changing them.
-All clients share the managed displays. The CPU is kept awake only while at least
-one display is active. For long screen-off sessions, use the battery optimization setup card.
+For screen-off use, follow the battery optimization setup in the app.
 
-For remote access through an outbound WebSocket, enable the **Central server**
-card and follow [central gateway setup](../docs/mua-remote.md). Local MCP remains available.
-
-See [configuration and MCP reference](../docs/mua.md) for networking,
-authorization reset, power behavior, tools, and protocol examples.
+- [Configuration and MCP tools](../docs/mua.md)
+- [Central server setup](../docs/mua-remote.md)
+- [Build and development](../docs/development.md)
