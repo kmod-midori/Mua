@@ -20,6 +20,7 @@ ksp = "2.3.12"
 
 [libraries]
 mcp-server = { module = "io.modelcontextprotocol:kotlin-sdk-server", version.ref = "mcp" }
+ktor-server-websockets = { module = "io.ktor:ktor-server-websockets" }
 ktor-server-cio = { module = "io.ktor:ktor-server-cio" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 termux-shared = { module = "com.termux.termux-app:termux-shared", version = "0.118.0" }
@@ -50,6 +51,8 @@ openai-client = { module = "com.aallam.openai:openai-client", version.ref = "ope
 shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
 shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
 
+ktor-client-websockets = { module = "io.ktor:ktor-client-websockets" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio" }
 ktor-client-core = { module = "io.ktor:ktor-client-core" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation" }

@@ -162,3 +162,9 @@ Use the returned ID in subsequent calls (42 is an example):
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"screenshot","arguments":{"displayId":42}}}
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"display_stop","arguments":{"displayId":42}}}
 ```
+
+## Central gateway
+
+The optional [central gateway](mua-remote.md) adds outbound WebSocket connectivity
+to a FastAPI server managed with uv. Its MCP endpoint routes tools by device ID;
+the local endpoint and existing display behavior remain available.

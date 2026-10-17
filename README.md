@@ -13,6 +13,8 @@ It uses an LLM agent to operate phone apps in the background. Shizuku lets the a
   frame capture, app launching, and input injection library.
 - [mua (Mobile-Using Agent)](mua/README.md): standalone Android app exposing the
   library through a configurable MCP server, without the agent or harness.
+- [server](server/README.md): optional FastAPI central MCP gateway for devices
+  connected through outbound WebSockets, managed with uv.
 
 ## Requirements
 

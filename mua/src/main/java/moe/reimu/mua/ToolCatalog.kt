@@ -35,26 +35,15 @@ internal data class ToolSpec(val name: String, val description: String, val prop
 }
 
 internal object ToolCatalog {
-    private fun number(min: Long? = null, max: Long? = null, integer: Boolean = false) = buildJsonObject {
-        put("type", if (integer) "integer" else "number"); min?.let { put("minimum", it) }; max?.let { put("maximum", it) }
+    // Shared with the central server; packaged as a Java resource by Gradle.
+    val specs: List<ToolSpec> = checkNotNull(ToolCatalog::class.java.getResourceAsStream("/device_tools.json")) {
+        "Missing device tool catalog"
+    }.bufferedReader().use { reader ->
+        Json.parseToJsonElement(reader.readText()).jsonArray.map { entry ->
+            val tool = entry.jsonObject
+            ToolSpec(tool.getValue("name").jsonPrimitive.content,
+                tool.getValue("description").jsonPrimitive.content,
+                tool.getValue("inputSchema").jsonObject.getValue("properties").jsonObject)
+        }
     }
-    private fun spec(name: String, description: String, vararg properties: Pair<String, JsonObject>) =
-        ToolSpec(name, description, JsonObject(properties.toMap()))
-    private val displayId = "displayId" to number(0, Int.MAX_VALUE.toLong(), true)
-    val specs = listOf(
-        spec("display_start", "Create an additional background display using the main display's pixel dimensions and DPI; return displayId and dimensions."),
-        spec("displays_list", "List managed display IDs, dimensions, and focused packages from Android."),
-        spec("recent_tasks_list", "List the current user's Android recent tasks with taskId, title (exact task label, falling back to app label), displayId, isRunning, package and base/top activities. Historical display IDs may be inactive."),
-        spec("recent_task_move", "Request moving or restoring a recent task to a virtual display and bring it to the front. Blocks only if another task of the app is in front on another display.", displayId, "taskId" to number(0, Int.MAX_VALUE.toLong(), true)),
-        spec("display_stop", "Stop the specified display and release its apps and capture buffers.", displayId),
-        spec("screenshot", "Return the specified display frame as a PNG image, scaled proportionally to at most 1980 pixels on its longest side (never upscaled). Input coordinates still use native display dimensions from displays_list. Retry if the first frame is not ready.", displayId),
-        spec("apps_list", "List launchable packages on this device."),
-        spec("app_launch", "Launch a package on the specified display. Blocks only if the app is in front on another display.", displayId, "package" to buildJsonObject { put("type", "string") }),
-        spec("focused_app", "Get the focused package on the specified display.", displayId),
-        spec("tap", "Tap native display coordinates.", displayId, "x" to number(), "y" to number()),
-        spec("swipe", "Swipe between native display coordinates.", displayId,
-            "x1" to number(), "y1" to number(), "x2" to number(), "y2" to number(),
-            "durationMs" to number(0, integer = true)),
-        spec("key_press", "Inject an Android key code (for example BACK=4, HOME=3, ENTER=66).", displayId, "keyCode" to number(0, Int.MAX_VALUE.toLong(), true)),
-    )
 }

@@ -26,6 +26,7 @@ class McpService : Service() {
     private lateinit var display: DisplayTools
     private lateinit var connection: ShizukuDisplayConnection
     private var server: McpHttpServer? = null
+    private var bridge: RemoteBridge? = null
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private lateinit var notificationBuilder: Notification.Builder
     @Volatile private var destroying = false
@@ -71,6 +72,17 @@ class McpService : Service() {
                 withContext(controlDispatcher) { display.execute(name, args) }
             }
             server?.start()
+            val remoteConfig = loadRemoteConfig()
+            remoteStatus = if (remoteConfig.enabled) "Connecting" else "Disabled"
+            if (remoteConfig.enabled) {
+                bridge = RemoteBridge(remoteConfig,
+                    { remoteStatus = it }) { name, args ->
+                    withContext(controlDispatcher) {
+                        check(!destroying) { "mua is stopping" }
+                        display.execute(name, args)
+                    }
+                }.also { it.start() }
+            }
             running = true
             previewService = this
         } catch (e: Exception) {
@@ -130,6 +142,7 @@ class McpService : Service() {
         setDisplayCount(0)
         displayPowerStatus = DisplayPowerStatus()
         try {
+            bridge?.close()
             server?.stop()
         } finally {
             try {
@@ -172,6 +185,8 @@ class McpService : Service() {
             }
         }
         @Volatile internal var displayPowerStatus = DisplayPowerStatus()
+            private set
+        @Volatile var remoteStatus = "Stopped"
             private set
         @Volatile var status = "Stopped"
             private set

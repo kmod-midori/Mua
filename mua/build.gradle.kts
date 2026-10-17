@@ -17,6 +17,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    sourceSets.getByName("main").resources.srcDir("../server/src/mua_server/catalog")
     buildFeatures {
         buildConfig = true
         compose = true
@@ -35,6 +36,10 @@ dependencies {
     implementation(libs.mcp.server)
     implementation(platform(libs.ktor.bom))
     implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
+    implementation(libs.ktor.client.websockets)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
+    testImplementation(libs.ktor.server.websockets)
 }

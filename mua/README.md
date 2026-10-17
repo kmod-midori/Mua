@@ -22,5 +22,8 @@ Settings save automatically when valid; stop the server before changing them.
 All clients share the managed displays. The CPU is kept awake only while at least
 one display is active. For long screen-off sessions, use the battery optimization setup card.
 
+For remote access through an outbound WebSocket, enable the **Central server**
+card and follow [central gateway setup](../docs/mua-remote.md). Local MCP remains available.
+
 See [configuration and MCP reference](../docs/mua.md) for networking,
 authorization reset, power behavior, tools, and protocol examples.

@@ -44,6 +44,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,6 +75,13 @@ class MainActivity : ComponentActivity() {
     private val validPort: Int? get() = portText.toIntOrNull()?.takeIf { it in 1024..65535 }
     private fun saveListenerIfValid() {
         validPort?.let { saveListenerConfig(ListenerConfig(listenAddress, it)) }
+    }
+    private var remoteConfig by mutableStateOf(RemoteConfig())
+    private var remoteStatus by mutableStateOf("Stopped")
+    private val remoteError: String? get() = runCatching { remoteConfig.validate() }.exceptionOrNull()?.message
+    private fun updateRemote(config: RemoteConfig) {
+        remoteConfig = config
+        saveRemoteConfig(config)
     }
     private var running by mutableStateOf(false)
     private var displayPowerStatus by mutableStateOf(DisplayPowerStatus())
@@ -105,6 +114,7 @@ class MainActivity : ComponentActivity() {
                 Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED
             }.getOrDefault(false)
             running = McpService.running
+            remoteStatus = McpService.remoteStatus
             displayPowerStatus = McpService.displayPowerStatus
             status = if (running) McpService.status else
                 McpService.status.takeIf { it.startsWith("Server failed:") } ?: "Stopped"
@@ -116,6 +126,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        remoteConfig = loadRemoteConfig()
         val listener = loadListenerConfig()
         listenAddress = listener.address
         portText = listener.port.toString()
@@ -232,7 +243,7 @@ class MainActivity : ComponentActivity() {
                                 style = MaterialTheme.typography.bodySmall)
                         }
                         Button(
-                            enabled = running || validPort != null,
+                            enabled = running || (validPort != null && remoteError == null),
                             onClick = { perform {
                                 if (running) stopService(Intent(this@MainActivity, McpService::class.java))
                                 else {
@@ -244,6 +255,46 @@ class MainActivity : ComponentActivity() {
                             } },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text(if (running) "Stop mua" else "Start mua") }
+                    }
+                }
+                item {
+                    SectionCard("Central server") {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Connect to central server", modifier = Modifier.weight(1f))
+                            Switch(checked = remoteConfig.enabled, enabled = !running,
+                                onCheckedChange = { updateRemote(remoteConfig.copy(enabled = it)) })
+                        }
+                        Text(if (running) remoteStatus else "Configure while mua is stopped",
+                            style = MaterialTheme.typography.bodyMedium)
+                        if (remoteConfig.enabled) {
+                            OutlinedTextField(value = remoteConfig.serverUrl,
+                                onValueChange = { updateRemote(remoteConfig.copy(serverUrl = it)) },
+                                label = { Text("Server URL") }, placeholder = { Text("wss://mua.example.com") },
+                                enabled = !running, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = remoteConfig.deviceName,
+                                onValueChange = { updateRemote(remoteConfig.copy(deviceName = it)) },
+                                label = { Text("Device name") }, enabled = !running, singleLine = true,
+                                modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = remoteConfig.deviceId,
+                                onValueChange = { updateRemote(remoteConfig.copy(deviceId = it)) },
+                                label = { Text("Device ID") }, enabled = !running, singleLine = true,
+                                modifier = Modifier.fillMaxWidth(), trailingIcon = {
+                                    IconButton(onClick = { perform {
+                                        getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                                            ClipData.newPlainText("mua device ID", remoteConfig.deviceId))
+                                    } }) { Icon(Icons.Default.ContentCopy, "Copy device ID") }
+                                })
+                            OutlinedTextField(value = remoteConfig.token,
+                                onValueChange = { updateRemote(remoteConfig.copy(token = it)) },
+                                label = { Text("Shared device token") }, enabled = !running, singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth())
+                            remoteError?.let { Text(it, color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall) }
+                            Text("Use the same device token on every phone. Each device keeps its own ID and name. Local MCP stays available. Use wss:// for encrypted connections.",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
                 item {
