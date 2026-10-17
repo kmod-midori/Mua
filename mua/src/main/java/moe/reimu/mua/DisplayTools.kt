@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Base64
+import androidx.core.graphics.scale
 import kotlinx.serialization.json.*
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
@@ -51,16 +52,10 @@ internal class DisplayTools(
             val metrics = service.mainDisplayMetrics
             check(metrics.size == 3) { "Invalid main display metrics" }
             val w = metrics[0]; val h = metrics[1]; val dpi = metrics[2]
-            require(w.toLong() * h <= 8_388_608) { "Display must be at most 8 megapixels" }
-            check(captures.size < 4) { "At most 4 virtual displays may be active" }
-            check(captures.values.sumOf { it.width.toLong() * it.height } + w.toLong() * h <= 16_777_216) {
-                "Active displays must total at most 16 megapixels"
-            }
             val next = DisplayCapture(w, h, handler)
             var id = -1
             try {
                 id = service.createDisplay(next.surface)
-                check(metrics.contentEquals(service.mainDisplayMetrics)) { "Main display changed during creation; retry display_start" }
                 check(id >= 0) { "Failed to create display" }
                 captures[id] = Capture(next, w, h, dpi)
                 onDisplayCountChanged(captures.size)
@@ -83,25 +78,30 @@ internal class DisplayTools(
             }.toString())
         }
         val id = int("displayId")
-        val capture = checkNotNull(captures[id]) { "Unknown or inactive virtual display: $id. Use displays_list for current IDs." }
-        fun coordinate(key: String, limit: Int): Float {
-            val value = args.getValue(key).jsonPrimitive.float
-            require(value >= 0 && value < limit) { "$key must be within display $id (0..<${limit})" }
-            return value
-        }
+        fun coordinate(key: String) = args.getValue(key).jsonPrimitive.float
         when (name) {
             "recent_task_move" -> {
                 val taskId = int("taskId")
                 service.moveRecentTaskToDisplay(taskId, id)
-                return textContent("Moved task $taskId to display $id")
+                return textContent("Move requested for task $taskId to display $id")
             }
             "display_stop" -> {
                 check(service.releaseDisplay(id)) { "Failed to stop display $id" }
                 removeCapture(id)
             }
             "screenshot" -> {
-                val bitmap = checkNotNull(capture.frames.bitmap()) { "No frame yet; retry screenshot shortly" }
+                val capture = checkNotNull(captures[id]) { "No capture available for display $id" }
+                var bitmap = checkNotNull(capture.frames.bitmap()) { "No frame yet; retry screenshot shortly" }
                 val bytes = try {
+                    val longest = maxOf(bitmap.width, bitmap.height)
+                    if (longest > 1980) {
+                        val scaled = bitmap.scale(
+                            (bitmap.width.toLong() * 1980 / longest).toInt().coerceAtLeast(1),
+                            (bitmap.height.toLong() * 1980 / longest).toInt().coerceAtLeast(1), true,
+                        )
+                        bitmap.recycle()
+                        bitmap = scaled
+                    }
                     ByteArrayOutputStream().use { out ->
                         check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out))
                         out.toByteArray()
@@ -114,12 +114,12 @@ internal class DisplayTools(
                 val intent = context.packageManager.getLaunchIntentForPackage(pkg)
                     ?: error("Package has no launchable activity: $pkg")
                 service.startActivityOnDisplay(id, intent)
-                return textContent("Launched $pkg on display $id")
+                return textContent("Launch requested for $pkg on display $id")
             }
             "focused_app" -> return textContent(service.getFocusedPackageOnDisplay(id) ?: "No focused package")
-            "tap" -> check(service.injectTapOnDisplay(id, coordinate("x", capture.width), coordinate("y", capture.height))) { "Tap failed" }
-            "swipe" -> check(service.injectSwipeOnDisplay(id, coordinate("x1", capture.width), coordinate("y1", capture.height),
-                coordinate("x2", capture.width), coordinate("y2", capture.height), int("durationMs").toLong())) { "Swipe failed" }
+            "tap" -> check(service.injectTapOnDisplay(id, coordinate("x"), coordinate("y"))) { "Tap failed" }
+            "swipe" -> check(service.injectSwipeOnDisplay(id, coordinate("x1"), coordinate("y1"),
+                coordinate("x2"), coordinate("y2"), args.getValue("durationMs").jsonPrimitive.long)) { "Swipe failed" }
             "key_press" -> check(service.injectKeyOnDisplay(id, int("keyCode"))) { "Key injection failed" }
             else -> error("Unknown tool")
         }

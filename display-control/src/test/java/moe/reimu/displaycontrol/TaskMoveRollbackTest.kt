@@ -13,7 +13,7 @@ class TaskMoveRollbackTest {
             }, { display = 4 })
         }
         assertEquals(4, display)
-        assertTrue(error.message!!.contains("Task restored to display 4"))
+        assertTrue(error.message!!.contains("Restoration requested to display 4"))
     }
 
     @Test fun failedRestorationReportsUncertainLocation() {
@@ -37,6 +37,6 @@ class TaskMoveRollbackTest {
             taskMoveWithRollback(0, true, { error("Conflict") }, { restored = true })
         }
         assertTrue(restored)
-        assertTrue(error.message!!.contains("Previously inactive task restored on main display"))
+        assertTrue(error.message!!.contains("Restoration requested on main display for previously inactive task"))
     }
 }

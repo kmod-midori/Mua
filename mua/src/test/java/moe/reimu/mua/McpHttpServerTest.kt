@@ -45,10 +45,11 @@ class McpHttpServerTest {
                     response.substringBefore("\r\n").split(" ")[1].toInt() to response.substringAfter("\r\n\r\n")
                 }
             }
-            assertEquals(403, call(host = "untrusted.example").first)
+            assertEquals(200, call(host = "custom.example").first)
             assertEquals(200, call(origin = "http://$connectHost:${server.listeningPort}").first)
             assertEquals(401, call(token = "wrong").first)
-            assertEquals(403, call(origin = "https://untrusted.example").first)
+            assertEquals(200, call(origin = "https://custom.example").first)
+            assertEquals(401, call(token = "wrong", host = "custom.example", origin = "https://custom.example").first)
             assertEquals(400, call(version = "unsupported").first)
             assertEquals(405, call(body = null).first)
             val initialized = call("""{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}""")
@@ -59,7 +60,7 @@ class McpHttpServerTest {
             ToolCatalog.specs.forEach { assertTrue(discovered.second.contains("\"name\":\"${it.name}\"")) }
             val tap = call("""{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tap","arguments":{"displayId":7,"x":1,"y":2}}}""")
             assertTrue(tap.second.contains("\"text\":\"OK\""))
-            val invalid = call("""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tap","arguments":{"displayId":7,"x":-1,"y":2}}}""")
+            val invalid = call("""{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tap","arguments":{"displayId":7,"x":null,"y":2}}}""")
             assertTrue(invalid.second.contains("\"isError\":true"))
             assertEquals(listOf("tap"), calls.toList())
             val failed = call("""{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"screenshot","arguments":{"displayId":7}}}""")

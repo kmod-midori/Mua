@@ -21,8 +21,7 @@ The original assistant retains its agent-specific binding/status lifecycle.
 Read `IUserService.getMainDisplayMetrics()` for width, height, and DPI, then use
 `DisplayCapture(width, height, handler)` to create a capture surface. Pass the
 surface to `createDisplay(surface)`, which uses the main display’s current metrics
-and returns an Android display ID. If the main metrics change during creation,
-release the display and retry with a matching capture. Call `bitmap()` for
+and returns an Android display ID. Call `bitmap()` for
 independently owned pixels. The caller recycles returned bitmaps when no longer used. Capture
 keeps at most one acquired frame. Its callback runs on the supplied Handler and
 outside its internal image lock. The host owns the Handler thread.
@@ -44,7 +43,7 @@ assistant. New methods use separate transaction codes; do not renumber either se
 
 `getRecentTasksJson()` queries Android’s current-user recent tasks without storing
 a local task registry. `moveRecentTaskToDisplay(taskId, displayId)` uses
-`startActivityFromRecents` with launch-display options and verifies the task’s
-destination through Android. The duplicate-app guard only checks focused tasks’
+`startActivityFromRecents` with launch-display options. It does not poll for
+launch/focus confirmation. The duplicate-app guard only checks focused tasks’
 top activities on other displays, excluding the source task during a move.
 Background tasks do not block launches or moves.

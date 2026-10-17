@@ -10,7 +10,7 @@ Run commands from the repository root.
 
 Debug APKs are written to each application module’s `build/outputs/apk/debug/`
 directory. The mua JVM tests cover tool validation, listener configuration, MCP
-transport behavior, authorization rotation, and Host/Origin checks.
+transport behavior, authorization rotation, and custom Host/Origin acceptance.
 
 ## Device checks
 
@@ -26,9 +26,8 @@ Android APIs, display rendering, input routing, or system power behavior.
 - Verify launches and moves allow background tasks of the same app on other
   displays, but reject another focused task with that app’s top activity.
   Close a task externally and verify the next launch uses fresh system state.
-  Exercise display count and total-pixel limits.
 - List recent tasks, restore an inactive task, and move a live task between virtual
-  displays. Verify the task ID stays the same, destination is confirmed by Android,
+  displays. Verify the task ID stays the same, destination can be queried through Android,
   and unknown tasks and invalid destinations are rejected.
 - Stack two tasks of the same app on one display, then move the top task to another
   display. A foreground conflict revealed on the source must restore the moved

@@ -264,7 +264,7 @@ class MainActivity : ComponentActivity() {
                             } }
                         }
                         Text(if (listenAddress == "0.0.0.0")
-                            "Streamable HTTP · Use an address reachable from your client. Restart mua after changing networks."
+                            "Streamable HTTP · Use an address reachable from your client."
                             else "Streamable HTTP · On-device clients only", style = MaterialTheme.typography.bodyMedium)
                         var authorization by remember { mutableStateOf("Bearer ${McpService.accessToken(this@MainActivity)}") }
                         Text("Authorization", style = MaterialTheme.typography.labelLarge)
@@ -288,7 +288,7 @@ class MainActivity : ComponentActivity() {
                         Text("Reset replaces the token immediately. Update connected clients with the new header.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("The token grants control of all managed virtual displays. Select a display by its ID.",
+                        Text("The token grants display control and access to recent tasks. Select a display by its ID.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

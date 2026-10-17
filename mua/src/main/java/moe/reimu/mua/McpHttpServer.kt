@@ -33,9 +33,6 @@ internal class McpHttpServer(
         // Port zero is reserved for ephemeral listeners in transport tests.
         require(port == 0 || port in 1024..65535)
     }
-    private val hosts = listOf("127.0.0.1", "localhost") + if (address == "0.0.0.0") {
-        deviceNetworkAddresses()
-    } else emptyList()
     private val mcp = Server(
         serverInfo = Implementation(name = "mua", version = "1.0"),
         options = ServerOptions(capabilities = ServerCapabilities(tools = ServerCapabilities.Tools())),
@@ -65,8 +62,7 @@ internal class McpHttpServer(
         }
         mcpStatelessStreamableHttp(
             path = "/mcp",
-            allowedHosts = hosts,
-            allowedOrigins = hosts.map { "http://$it" },
+            enableDnsRebindingProtection = false,
         ) { mcp }
     }
 

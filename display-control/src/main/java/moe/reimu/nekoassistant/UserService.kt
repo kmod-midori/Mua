@@ -92,11 +92,6 @@ class UserService : IUserService.Stub() {
         require(width > 0 && height > 0 && dpi > 0 && surface != null) {
             "Invalid display dimensions, density or surface"
         }
-        require(width.toLong() * height <= 8_388_608) { "Display must be at most 8 megapixels" }
-        getDisplayIds() // Discard displays removed externally before applying resource limits.
-        check(displays.size < 4) { "At most 4 virtual displays may be active" }
-        val pixels = displays.values.sumOf { it.display.mode.let { mode -> mode.physicalWidth.toLong() * mode.physicalHeight } }
-        check(pixels + width.toLong() * height <= 16_777_216) { "Active displays must total at most 16 megapixels" }
         var flags = (DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
                 or DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION
                 or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
@@ -167,7 +162,7 @@ class UserService : IUserService.Stub() {
     }
 
     private fun requireDisplay(displayId: Int) {
-        check(displays[displayId]?.display?.isValid == true) { "Unknown or inactive virtual display: $displayId" }
+        check(displayManager().getDisplay(displayId)?.isValid == true) { "Unknown or inactive display: $displayId" }
     }
 
     private fun getGetTasksMethod(manager: IInterface): Method {
@@ -250,6 +245,8 @@ class UserService : IUserService.Stub() {
     @Synchronized
     override fun moveRecentTaskToDisplay(taskId: Int, displayId: Int) {
         requireDisplay(displayId)
+        require(Display::class.java.getMethod("getType").invoke(displayManager().getDisplay(displayId)) ==
+            Display::class.java.getField("TYPE_VIRTUAL").getInt(null)) { "Destination must be a virtual display" }
         val task = recentTasks().firstOrNull { it.taskId == taskId }
             ?: error("Unknown recent task: $taskId. Refresh recent_tasks_list.")
         val pkg = task.topActivity?.packageName ?: task.baseIntent.component?.packageName
@@ -259,15 +256,12 @@ class UserService : IUserService.Stub() {
         val sourceDisplayId = before.firstOrNull { it.taskId == taskId }?.let { taskDisplayIdField.getInt(it) }
             ?.takeIf { it >= 0 }
         val restoreDisplayId = sourceDisplayId ?: Display.DEFAULT_DISPLAY
-        taskMoveWithRollback(restoreDisplayId, sourceDisplayId == null, moveAndVerify = {
+        taskMoveWithRollback(restoreDisplayId, sourceDisplayId == null, moveAndCheck = {
             startRecentTask(taskId, displayId)
-            awaitFocusedTask(taskId, displayId) { current ->
-                checkForegroundConflict(current, pkg, displayId, taskId)
-            }
-        }, restoreAndVerify = {
+            checkForegroundConflict(runningTasks(), pkg, displayId, taskId)
+        }, requestRestore = {
             // Moving the top task may reveal another foreground task of the same app underneath it.
             startRecentTask(taskId, restoreDisplayId)
-            awaitFocusedTask(taskId, restoreDisplayId)
         })
     }
 
@@ -277,24 +271,6 @@ class UserService : IUserService.Stub() {
         val result = manager.javaClass.getMethod("startActivityFromRecents", Int::class.javaPrimitiveType,
             Bundle::class.java).invoke(manager, taskId, options.toBundle()) as Int
         check(result >= 0) { "Android rejected task move (result $result)" }
-    }
-
-    private fun awaitFocusedTask(
-        taskId: Int, displayId: Int, checkSnapshot: (List<ActivityManager.RunningTaskInfo>) -> Unit = {},
-    ) {
-        val deadline = SystemClock.uptimeMillis() + 3000
-        var confirmed = false
-        do {
-            val current = runningTasks()
-            checkSnapshot(current)
-            val focused = current.any { it.taskId == taskId && taskDisplayIdField.getInt(it) == displayId &&
-                taskFocusedField.getBoolean(it) }
-            // Require a second snapshot after focus has settled, not just task reparenting.
-            if (focused && confirmed) return
-            confirmed = focused
-            SystemClock.sleep(50)
-        } while (SystemClock.uptimeMillis() < deadline)
-        error("Android did not confirm focused task $taskId on display $displayId")
     }
 
     private val taskDisplayIdField by lazy { ActivityManager.RunningTaskInfo::class.java.getField("displayId") }
@@ -329,16 +305,7 @@ class UserService : IUserService.Stub() {
             launch.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
         }
         ActivityManagerWrapper.get().startActivity(launch, options.toBundle())
-        // Keep launch/check atomic for this Binder service until Android publishes the task.
-        // A failed query or unconfirmed launch fails closed rather than recording guessed ownership.
-        val deadline = SystemClock.uptimeMillis() + 3000
-        do {
-            val current = runningTasks()
-            checkForegroundConflict(current, pkg, displayId)
-            if (current.any { taskContainsPackage(it, pkg) && taskDisplayIdField.getInt(it) == displayId }) return
-            SystemClock.sleep(50)
-        } while (SystemClock.uptimeMillis() < deadline)
-        error("Android did not confirm a task for $pkg on display $displayId")
+        checkForegroundConflict(runningTasks(), pkg, displayId)
     }
 
     @Synchronized

@@ -17,8 +17,8 @@ class ToolCatalogTest {
     }
 
     @Test fun malformedCoordinatesCannotReachDisplayOperations() {
-        for (args in listOf("""{"displayId":7,"x":-1,"y":2}""", """{"displayId":7,"x":"2","y":2}""", """{"displayId":7,"x":1}""",
-            """{"displayId":7,"x":1,"y":2,"extra":3}""", """{"displayId":7,"x":null,"y":2}""")) {
+        for (args in listOf("""{"displayId":7,"x":"2","y":2}""", """{"displayId":7,"x":1}""",
+            """{"displayId":7,"x":null,"y":2}""")) {
             assertThrows(Exception::class.java) { validate("tap", args) }
         }
     }
@@ -26,7 +26,7 @@ class ToolCatalogTest {
     @Test fun displayAndGestureLimitsAreEnforced() {
         assertThrows(Exception::class.java) { validate("key_press", """{"displayId":7,"keyCode":2.5}""") }
         assertThrows(Exception::class.java) { validate("display_start", """{"width":4097,"height":720,"dpi":240}""") }
-        assertThrows(Exception::class.java) { validate("swipe", """{"displayId":7,"x1":1,"x2":2,"y1":1,"y2":2,"durationMs":5001}""") }
+        assertThrows(Exception::class.java) { validate("swipe", """{"displayId":7,"x1":1,"x2":2,"y1":1,"y2":2,"durationMs":-1}""") }
         assertThrows(Exception::class.java) { validate("app_launch", """{"displayId":7,"package":""}""") }
     }
 
@@ -45,7 +45,7 @@ class ToolCatalogTest {
         }
     }
 
-    @Test fun displayToolsRequireAnExplicitPositiveId() {
+    @Test fun displayToolsRequireAnExplicitNonnegativeId() {
         val examples = mapOf(
             "recent_task_move" to "{\"taskId\":42}",
             "display_stop" to "{}", "screenshot" to "{}", "focused_app" to "{}",
@@ -55,7 +55,7 @@ class ToolCatalogTest {
         )
         examples.forEach { (name, args) ->
             assertThrows(Exception::class.java) { validate(name, args) }
-            for (id in listOf("0", "-1", "1.5", "null", "\"7\"")) {
+            for (id in listOf("-1", "1.5", "null", "\"7\"")) {
                 val invalid = JsonObject(Json.parseToJsonElement(args).jsonObject + ("displayId" to Json.parseToJsonElement(id)))
                 assertThrows(Exception::class.java) { validate(name, invalid.toString()) }
             }
@@ -69,6 +69,20 @@ class ToolCatalogTest {
             }
         }
         assertThrows(Exception::class.java) { validate("recent_task_move", "{\"displayId\":7}") }
+    }
+
+    @Test fun removedNumericAndStringCapsAreAccepted() {
+        validate("tap", """{"displayId":7,"x":-10,"y":100000}""")
+        validate("swipe", """{"displayId":7,"x1":-1,"y1":0,"x2":100000,"y2":0,"durationMs":60000}""")
+        validate("swipe", """{"displayId":7,"x1":0,"y1":0,"x2":1,"y2":1,"durationMs":9223372036854775807}""")
+        validate("key_press", """{"displayId":7,"keyCode":1001}""")
+        validate("app_launch", """{"displayId":7,"package":"${"a".repeat(256)}"}""")
+    }
+
+    @Test fun extraArgumentsAndMainDisplayAreAccepted() {
+        validate("tap", """{"displayId":0,"x":-10,"y":100000,"extra":true}""")
+        validate("app_launch", """{"displayId":0,"package":"com.android.settings"}""")
+        validate("apps_list", """{"extra":"ignored"}""")
     }
 
 }

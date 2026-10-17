@@ -19,7 +19,7 @@ agent loop or harness. Requires Android 12+ and a running Shizuku installation.
    stop tools. Use `displays_list` to find active IDs, or **Stop mua** to release all.
 
 Settings save automatically when valid; stop the server before changing them.
-All clients share up to four displays. The CPU is kept awake only while at least
+All clients share the managed displays. The CPU is kept awake only while at least
 one display is active. For long screen-off sessions, use the battery optimization setup card.
 
 See [configuration and MCP reference](../docs/mua.md) for networking,
