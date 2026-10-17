@@ -29,6 +29,16 @@ class McpService : Service() {
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private lateinit var notificationBuilder: Notification.Builder
     @Volatile private var destroying = false
+    private val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) {
+            if (!destroying) worker.execute {
+                if (!destroying) try { display.refreshDisplays() }
+                catch (e: Exception) { android.util.Log.w("MuaMcp", "Could not refresh displays", e) }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -45,7 +55,9 @@ class McpService : Service() {
         displayPowerStatus = DisplayPowerStatus()
         startForeground(1, buildNotification())
         try {
-            display = DisplayTools(applicationContext, ::setDisplayActive)
+            display = DisplayTools(applicationContext, ::setDisplayCount)
+            getSystemService(android.hardware.display.DisplayManager::class.java)
+                .registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
             connection = ShizukuDisplayConnection(this, BuildConfig.DEBUG, BuildConfig.VERSION_CODE, { remote ->
                 worker.execute {
                     display.connected(remote)
@@ -79,8 +91,8 @@ class McpService : Service() {
     // No timeout: a live display needs CPU access until it is stopped/disconnected.
     @SuppressLint("WakelockTimeout", "Wakelock") // Released by the inactive callback or onDestroy, not on method return.
     @Synchronized
-    private fun setDisplayActive(active: Boolean) {
-        if (active && !destroying) {
+    private fun setDisplayCount(count: Int) {
+        if (count > 0 && !destroying) {
             if (cpuWakeLock?.isHeld != true) {
                 cpuWakeLock = getSystemService(PowerManager::class.java)
                     .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "mua:McpServer").apply {
@@ -93,7 +105,7 @@ class McpService : Service() {
             cpuWakeLock = null
         }
         if (!destroying) {
-            displayPowerStatus = DisplayPowerStatus(active, cpuWakeLock?.isHeld == true)
+            displayPowerStatus = DisplayPowerStatus(count, cpuWakeLock?.isHeld == true)
             // Notification failures must not interrupt display/resource cleanup.
             try {
                 getSystemService(NotificationManager::class.java).notify(1, buildNotification())
@@ -111,8 +123,9 @@ class McpService : Service() {
 
     override fun onDestroy() {
         destroying = true
+        getSystemService(android.hardware.display.DisplayManager::class.java).unregisterDisplayListener(displayListener)
         running = false
-        setDisplayActive(false)
+        setDisplayCount(0)
         displayPowerStatus = DisplayPowerStatus()
         try {
             server?.stop()
@@ -129,7 +142,7 @@ class McpService : Service() {
                     worker.shutdown()
                 }
             } finally {
-                setDisplayActive(false)
+                setDisplayCount(0)
                 super.onDestroy()
             }
         }

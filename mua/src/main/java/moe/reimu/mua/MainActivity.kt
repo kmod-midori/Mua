@@ -243,7 +243,7 @@ class MainActivity : ComponentActivity() {
                         Text("Reset replaces the token immediately. Update connected clients with the new header.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("The token grants control of the virtual display. All clients share one display.",
+                        Text("The token grants control of all managed virtual displays. Select a display by its ID.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -252,7 +252,7 @@ class MainActivity : ComponentActivity() {
                     SectionCard("Screen-off operation") {
                         Text("Battery optimization enabled",
                             style = MaterialTheme.typography.titleMedium)
-                        Text("mua keeps the CPU awake only while a virtual display is active, without turning on the screen. Stop the display when finished to save battery.",
+                        Text("mua keeps the CPU awake only while any virtual display is active, without turning on the screen. Stop the display when finished to save battery.",
                             style = MaterialTheme.typography.bodyMedium)
                         Text("For long screen-off sessions, show all apps in battery settings and allow mua to run without optimization.",
                             style = MaterialTheme.typography.bodyMedium)

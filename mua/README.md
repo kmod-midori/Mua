@@ -1,6 +1,6 @@
 # mua (Mobile-Using Agent)
 
-An Android app exposing a Shizuku virtual display through MCP. It uses the shared
+An Android app exposing Shizuku virtual displays through MCP. It uses the shared
 [display-control library](../display-control/README.md) without the assistant’s
 agent loop or harness. Requires Android 12+ and a running Shizuku installation.
 
@@ -14,12 +14,13 @@ agent loop or harness. Requires Android 12+ and a running Shizuku installation.
 4. Copy an endpoint URL and the **Authorization** value from **Client connection**
    into your MCP client. Use Streamable HTTP and send the copied `Bearer …` value
    in the `Authorization` header. Network access uses unencrypted HTTP.
-5. Call `display_start`, then launch and control an app. Call `display_stop` to
-   release the display, or **Stop mua** to shut down the server too.
+5. Call `display_start` with no arguments. It returns a display ID and uses the
+   main display’s size and DPI. Pass `displayId` to launch, capture, input, and
+   stop tools. Use `displays_list` to find active IDs, or **Stop mua** to release all.
 
 Settings save automatically when valid; stop the server before changing them.
-All clients share one display. The CPU is kept awake only while that display is
-active. For long screen-off sessions, use the battery optimization setup card.
+All clients share up to four displays. The CPU is kept awake only while at least
+one display is active. For long screen-off sessions, use the battery optimization setup card.
 
 See [configuration and MCP reference](../docs/mua.md) for networking,
 authorization reset, power behavior, tools, and protocol examples.

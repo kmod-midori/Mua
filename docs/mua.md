@@ -16,7 +16,7 @@ randomness; subsequent requests must use the new token, without restarting the
 server. Requests already authorized may finish. Existing tokens remain valid until
 reset, so updating the app does not break configured clients.
 
-All authorized clients share one display and a serialized operation queue.
+All authorized clients share the managed displays and a serialized operation queue.
 Stopping or losing Shizuku discards captured frames; after reconnection create a
 new display. Android may stop the foreground service; restart it manually.
 
@@ -29,12 +29,13 @@ card prompts you to connect to a network. Addresses refresh while the app is ope
 
 While a virtual display is active, mua holds a `PARTIAL_WAKE_LOCK` tagged
 `mua:McpServer`. This keeps the CPU available without waking the physical screen.
-The lock is acquired after successful display creation and released on display
-stop, Shizuku disconnect, failed display creation, or service destruction. Android
+The lock is acquired after successful display creation and released when the last display
+stops, on Shizuku disconnect, or on service destruction. Failed creation preserves
+the lock only if other displays remain active. Android
 also releases it if the process dies. A running MCP server with no display holds
 no wake lock. Stop the display when finished: an active display keeps the CPU
 awake even between requests. The foreground notification includes a Stop action.
-The notification and main screen's MCP server card show the same display and
+The notification and main screen's MCP server card show the same active display count and
 CPU wake-lock status. The screen refreshes while visible and when resumed.
 
 For long unplugged sessions, open **Battery optimization settings** in mua,
@@ -54,21 +55,37 @@ override is used.
 
 | Tool | Required arguments | Result |
 | --- | --- | --- |
-| `display_start` | `width`, `height`, `dpi` | Replaces the display; 64–4096 pixels per side, at most 8 megapixels, 72–640 DPI |
-| `display_stop` | None | Releases display and capture buffers |
+| `display_start` | None | Creates an additional display; returns `displayId`, `width`, `height`, `dpi` |
+| `displays_list` | None | Managed display IDs, dimensions, DPI, and system-reported focused packages |
+| `display_stop` | `displayId` | Releases that display and its capture buffers |
 | `apps_list` | None | Launchable packages and labels |
-| `app_launch` | `package` | Requests launch on the virtual display |
-| `focused_app` | None | Focused package, if any |
-| `screenshot` | None | PNG image content, at native display resolution |
-| `tap` | `x`, `y` | Tap at native display coordinates |
-| `swipe` | `x1`, `y1`, `x2`, `y2`, `durationMs` | Swipe lasting 1–5000 ms |
-| `key_press` | `keyCode` | Android key event, e.g. BACK=4, HOME=3, ENTER=66 |
+| `app_launch` | `displayId`, `package` | Launches on the selected display, rejecting tasks on other displays |
+| `focused_app` | `displayId` | System-reported focused package, if any |
+| `screenshot` | `displayId` | PNG image content at native display resolution |
+| `tap` | `displayId`, `x`, `y` | Tap at native display coordinates |
+| `swipe` | `displayId`, `x1`, `y1`, `x2`, `y2`, `durationMs` | Swipe lasting 1–5000 ms |
+| `key_press` | `displayId`, `keyCode` | Android key event, e.g. BACK=4, HOME=3, ENTER=66 |
 
-Coordinates start at `(0, 0)` and must be smaller than the display dimensions.
-Screenshots own their pixels and do not expose a shared mutable ImageReader
-buffer. Before the first frame arrives, screenshot returns a tool error; retry.
-Launching reports a request, not confirmation that an app rendered successfully.
-Some apps reject secondary displays; hidden Android APIs also vary by device.
+Each new display uses the main display’s current size and DPI. Size and density
+arguments are not accepted. Existing displays retain their creation dimensions.
+Limits are four displays, 8 megapixels per display, and 16 megapixels total.
+Creation fails if these limits would be exceeded; dimensions are never reduced.
+Display IDs come from Android, may change after recreation, and must be supplied
+explicitly to every display-specific tool. Physical and unknown IDs are rejected.
+
+`app_launch` queries Android’s current tasks before and after launch; it keeps no
+app-placement registry. A package with a task on another display, including the
+physical display, is rejected even if backgrounded. An existing task on the target
+is reused. The check uses task base/top activities and base intents, and fails if
+the system query or launch confirmation fails. It guards launches through this
+tool; system or external launches are not intercepted. Some apps reject secondary
+displays, and hidden Android APIs vary by device. Task confirmation does not
+promise that the app has rendered its first frame.
+
+Coordinates start at `(0, 0)` and must be smaller than the selected display’s
+dimensions. Screenshots own their pixels and do not expose a shared mutable
+ImageReader buffer. Before the first frame arrives, screenshot returns a tool
+error; retry.
 
 ## Protocol
 
@@ -101,5 +118,12 @@ Example initialization body:
 After sending `notifications/initialized`, create a display:
 
 ```json
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"display_start","arguments":{"width":1080,"height":1920,"dpi":420}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"display_start","arguments":{}}}
+```
+
+Use the returned ID in subsequent calls (42 is an example):
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"screenshot","arguments":{"displayId":42}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"display_stop","arguments":{"displayId":42}}}
 ```

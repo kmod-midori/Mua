@@ -18,9 +18,12 @@ It observes Shizuku availability and permission changes. The host owns permissio
 prompts, foreground-service lifetime, and its policy for service disconnects.
 The original assistant retains its agent-specific binding/status lifecycle.
 
-Use `DisplayCapture(width, height, handler)` to create a capture surface, pass
-that surface to `IUserService.startDisplay`, and call `bitmap()` for independently
-owned pixels. The caller recycles returned bitmaps when no longer used. Capture
+Read `IUserService.getMainDisplayMetrics()` for width, height, and DPI, then use
+`DisplayCapture(width, height, handler)` to create a capture surface. Pass the
+surface to `createDisplay(surface)`, which uses the main display’s current metrics
+and returns an Android display ID. If the main metrics change during creation,
+release the display and retry with a matching capture. Call `bitmap()` for
+independently owned pixels. The caller recycles returned bitmaps when no longer used. Capture
 keeps at most one acquired frame. Its callback runs on the supplied Handler and
 outside its internal image lock. The host owns the Handler thread.
 
@@ -32,3 +35,9 @@ serializes display/input operations to prevent release during a gesture.
 
 Consumers receive keep rules for the reflectively constructed Shizuku service.
 No agent, UI, MCP, database, or LLM dependency is included in this library.
+
+Use `getDisplayIds()` and the display-ID input, launch, and focus methods for
+multiple displays; release each with `releaseDisplay(id)`. The host tracks capture
+resources, while the privileged service queries Android tasks for app placement.
+The original transactions 1–9 retain the legacy default-display API used by the
+assistant. New methods use separate transaction codes; do not renumber either set.

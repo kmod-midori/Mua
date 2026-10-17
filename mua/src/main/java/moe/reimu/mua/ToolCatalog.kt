@@ -35,18 +35,19 @@ internal object ToolCatalog {
     }
     private fun spec(name: String, description: String, vararg properties: Pair<String, JsonObject>) =
         ToolSpec(name, description, JsonObject(properties.toMap()))
+    private val displayId = "displayId" to number(1, Int.MAX_VALUE, true)
     val specs = listOf(
-        spec("display_start", "Create a background display, replacing any existing display. Dimensions are native pixels.",
-            "width" to number(64, 4096, true), "height" to number(64, 4096, true), "dpi" to number(72, 640, true)),
-        spec("display_stop", "Stop the display and release its apps and capture buffers."),
-        spec("screenshot", "Return the latest display frame as a PNG image. Retry if the first frame is not ready."),
+        spec("display_start", "Create an additional background display using the main display's pixel dimensions and DPI; return displayId and dimensions. Up to 4 displays, 16 megapixels total."),
+        spec("displays_list", "List managed display IDs, dimensions, and focused packages from Android."),
+        spec("display_stop", "Stop the specified display and release its apps and capture buffers.", displayId),
+        spec("screenshot", "Return the specified display frame as a PNG image. Retry if the first frame is not ready.", displayId),
         spec("apps_list", "List launchable packages on this device."),
-        spec("app_launch", "Launch a package on the background display.", "package" to buildJsonObject { put("type", "string") }),
-        spec("focused_app", "Get the focused package on the background display."),
-        spec("tap", "Tap native display coordinates.", "x" to number(0, 4095), "y" to number(0, 4095)),
-        spec("swipe", "Swipe between native display coordinates.",
-            "x1" to number(0, 4095), "y1" to number(0, 4095), "x2" to number(0, 4095), "y2" to number(0, 4095),
+        spec("app_launch", "Launch a package on the specified display. Rejects packages with an Android task on another display.", displayId, "package" to buildJsonObject { put("type", "string") }),
+        spec("focused_app", "Get the focused package on the specified display.", displayId),
+        spec("tap", "Tap native display coordinates.", displayId, "x" to number(0, Int.MAX_VALUE), "y" to number(0, Int.MAX_VALUE)),
+        spec("swipe", "Swipe between native display coordinates.", displayId,
+            "x1" to number(0, Int.MAX_VALUE), "y1" to number(0, Int.MAX_VALUE), "x2" to number(0, Int.MAX_VALUE), "y2" to number(0, Int.MAX_VALUE),
             "durationMs" to number(1, 5000, true)),
-        spec("key_press", "Inject an Android key code (for example BACK=4, HOME=3, ENTER=66).", "keyCode" to number(0, 1000, true)),
+        spec("key_press", "Inject an Android key code (for example BACK=4, HOME=3, ENTER=66).", displayId, "keyCode" to number(0, 1000, true)),
     )
 }
