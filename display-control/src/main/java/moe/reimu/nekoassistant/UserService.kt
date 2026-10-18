@@ -143,6 +143,38 @@ class UserService : IUserService.Stub() {
         } finally { process.destroy() }
     }
 
+    private fun <T> withClipboard(action: (android.content.ClipboardManager) -> T): T {
+        val identity = android.os.Binder.clearCallingIdentity()
+        try {
+            return action(FakeContext.getInstance().getSystemService(android.content.ClipboardManager::class.java))
+        } finally { android.os.Binder.restoreCallingIdentity(identity) }
+    }
+
+    @Synchronized
+    override fun getClipboardText(): String = withClipboard { clipboard ->
+        val clip = clipboard.primaryClip
+            ?: error("Clipboard unavailable: it is empty or Android blocked clipboard access (for example while locked)")
+        check(clip.itemCount > 0) { "Clipboard contains no items" }
+        clip.getItemAt(0).text?.toString() ?: error("Clipboard does not contain text")
+    }
+
+    @Synchronized
+    override fun setClipboardTextVerified(text: String) = withClipboard { clipboard ->
+        val marker = java.util.UUID.randomUUID().toString()
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText(marker, text))
+        // A fresh marker distinguishes an accepted write from an ignored write of identical text.
+        try {
+            val actual = clipboard.primaryClip
+            check(actual != null && actual.description.label?.toString() == marker &&
+                actual.itemCount == 1 && actual.getItemAt(0).text?.toString() == text)
+        } catch (e: Exception) {
+            throw IllegalStateException(
+                "Clipboard write could not be verified: Android blocked access or the clipboard changed. The write may have taken effect.",
+                e,
+            )
+        }
+    }
+
     @Synchronized
     override fun sendNotificationIntent(pendingIntent: PendingIntent, displayId: Int, fillIn: Intent?) {
         require(displayId >= 0) { "Display ID must be nonnegative" }

@@ -457,5 +457,32 @@
         "displayId"
       ]
     }
+  },
+  {
+    "name": "clipboard_get",
+    "description": "Read text from the first item of the device clipboard through Shizuku. Returns an error when the clipboard is unavailable, empty, non-text, or Android blocks access.",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "clipboard_set",
+    "description": "Set device clipboard text through Shizuku and verify the write by reading it back. If Android blocks access or verification fails, returns an error; the write may already have taken effect. Does not paste into a field.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
   }
 ]

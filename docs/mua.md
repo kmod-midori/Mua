@@ -88,6 +88,8 @@ override is used.
 | `tap` | `displayId`, `x`, `y` | Tap at native display coordinates |
 | `long_press` | `displayId`, `x`, `y` | Long press at native display coordinates |
 | `double_tap` | `displayId`, `x`, `y` | Double tap at native display coordinates |
+| `clipboard_get` | — | Read clipboard text through Shizuku; unavailable/blocked access returns an error |
+| `clipboard_set` | `text` | Write clipboard text and verify by reading back; an error may follow a successful write if readback is blocked |
 | `focused_field` | `displayId` | Focused node bounds and editing state, without field contents |
 | `text_input` | `displayId`, `text` | Replace the focused editable field’s contents using accessibility |
 | `swipe` | `displayId`, `x1`, `y1`, `x2`, `y2`, `durationMs` | Swipe with a nonnegative duration in milliseconds |

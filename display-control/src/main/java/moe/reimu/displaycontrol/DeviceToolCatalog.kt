@@ -83,6 +83,7 @@ object DeviceToolCatalog {
     }
 
     val definitions: List<DeviceToolDefinition<*, *>> = listOf(
+        text<GetClipboard>("clipboard_get"), text<SetClipboard>("clipboard_set"),
         data<FocusedField, FocusedFieldResult>("focused_field"),
         data<StartDisplay, DisplayInfo>("display_start"),
         data<ListDisplays, List<DisplayInfo>>("displays_list"),

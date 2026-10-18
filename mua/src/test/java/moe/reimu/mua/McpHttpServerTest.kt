@@ -19,6 +19,7 @@ class McpHttpServerTest {
         val token = java.util.concurrent.atomic.AtomicReference("test-token")
         val server = McpHttpServer("test-token", 0, address, tokenProvider = { token.get() }) { name, _ ->
             calls.add(name)
+            if (name == "clipboard_get" || name == "clipboard_set") error("Android blocked clipboard access")
             if (name == "screenshot") error("Shizuku disconnected")
             textContent("OK")
         }
@@ -61,7 +62,7 @@ class McpHttpServerTest {
             ToolCatalog.specs.forEach { assertTrue(discovered.second.contains("\"name\":\"${it.name}\"")) }
             val body = discovered.second.let { it.substring(it.indexOf('{'), it.lastIndexOf('}') + 1) }
             val tools = Json.parseToJsonElement(body).jsonObject.getValue("result").jsonObject.getValue("tools").jsonArray
-            val readOnly = setOf("apps_search", "focused_field", "apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot", "notifications_list")
+            val readOnly = setOf("apps_search", "clipboard_get", "focused_field", "apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot", "notifications_list")
             tools.forEach { entry ->
                 val tool = entry.jsonObject
                 val name = tool.getValue("name").jsonPrimitive.content
@@ -76,6 +77,11 @@ class McpHttpServerTest {
             val failed = call("""{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"screenshot","arguments":{"displayId":7}}}""")
             assertTrue(failed.second.contains("Shizuku disconnected"))
             assertTrue(failed.second.contains("\"isError\":true"))
+            for ((name, arguments) in listOf("clipboard_get" to "{}", "clipboard_set" to """{"text":""}""")) {
+                val blocked = call("""{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"$name","arguments":$arguments}}""")
+                assertTrue(blocked.second.contains("Android blocked clipboard access"))
+                assertTrue(blocked.second.contains("\"isError\":true"))
+            }
             val ping = call()
             assertEquals(200, ping.first)
             assertTrue(ping.second.contains("\"result\":{}"))

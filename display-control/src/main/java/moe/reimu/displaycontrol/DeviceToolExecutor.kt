@@ -34,6 +34,8 @@ class DeviceToolExecutor(
     }
 
     private val dispatcher = DeviceToolDispatcher(
+        handle<GetClipboard, String> { service().clipboardText },
+        handle<SetClipboard, String> { service().setClipboardTextVerified(it.text); "Clipboard text set and verified" },
         handle<FocusedField, FocusedFieldResult> { AgentTextAccessibilityService.focusedField(it.displayId) },
         handle<StartDisplay, DisplayInfo>(displayOperation { service, _ -> startDisplay(service) }),
         handle<ListDisplays, List<DisplayInfo>>(displayOperation { service, _ -> listDisplays(service) }),

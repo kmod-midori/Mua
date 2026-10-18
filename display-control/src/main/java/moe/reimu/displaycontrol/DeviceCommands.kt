@@ -66,3 +66,6 @@ data class FocusedFieldInfo(
     val enabled: Boolean, val visibleToUser: Boolean, val password: Boolean,
     val supportsSetText: Boolean,
 )
+
+@Serializable data object GetClipboard : DeviceCommand<String>
+@Serializable data class SetClipboard(val text: String) : DeviceCommand<String>
