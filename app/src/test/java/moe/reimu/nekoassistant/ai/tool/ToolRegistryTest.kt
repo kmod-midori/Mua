@@ -24,11 +24,18 @@ class ToolRegistryTest {
             Triple("Wait", """{"seconds":3}""", Wait(3)),
             Triple("Finish", """{"message":"Done"}""", Finish("Done")),
             Triple("TermuxShell", """{"command":"pwd","workingDirectory":"~"}""", TermuxShell("pwd", "~")),
+            Triple("NotificationsList", "{}", NotificationsList()),
+            Triple("NotificationClear", """{"key":"test"}""", NotificationClear("test")),
+            Triple("NotificationClick", """{"key":"test","displayId":7}""", NotificationClick("test", 7)),
+            Triple("NotificationAction", """{"key":"test","actionIndex":0,"displayId":7}""", NotificationAction("test", 0, 7)),
+            Triple("NotificationReply", """{"key":"test","actionIndex":0,"displayId":7,"resultKey":"reply","text":"hello"}""", NotificationReply("test", 0, 7, "reply", "hello")),
         )
 
         assertEquals(calls.map { it.first }, ToolRegistry.definitions(termuxAvailable = true).map { it.function.name })
         calls.forEach { (name, arguments, expected) ->
-            assertEquals(name, expected, ToolRegistry.decode(name, arguments, termuxAvailable = true))
+            val decoded = ToolRegistry.decode(name, arguments, termuxAvailable = true)
+            if (expected is NotificationsList) assertEquals(expected.javaClass, decoded?.javaClass)
+            else assertEquals(name, expected, decoded)
         }
     }
 

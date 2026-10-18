@@ -87,6 +87,11 @@ override is used.
 | `tap` | `displayId`, `x`, `y` | Tap at native display coordinates |
 | `swipe` | `displayId`, `x1`, `y1`, `x2`, `y2`, `durationMs` | Swipe with a nonnegative duration in milliseconds |
 | `key_press` | `displayId`, `keyCode` | Android key event, e.g. BACK=4, HOME=3, ENTER=66 |
+| `notifications_list` | None | Active notification keys, text, content intents, actions, and remote input fields |
+| `notification_clear` | `key` | Requests dismissal of one notification |
+| `notification_click` | `key`, `displayId` | Sends the notification content intent |
+| `notification_action` | `key`, `actionIndex`, `displayId` | Sends an indexed notification action |
+| `notification_reply` | `key`, `actionIndex`, `displayId`, `resultKey`, `text` | Sends text through an action’s remote input field |
 
 Each new display uses the main display’s current size and DPI. Size and density
 arguments are not accepted. Existing displays retain their creation dimensions.
@@ -129,6 +134,32 @@ are passed to Android without clipping or rejection. Screenshots own their pixel
 and do not expose a shared mutable
 ImageReader buffer. Before the first frame arrives, screenshot returns a tool
 error; retry.
+
+## Notification access
+
+Mua and Neko Assistant share a notification listener in `display-control`.
+Starting the MCP or agent service enables it through Shizuku; stopping the service
+or losing the Shizuku connection disables it. The privileged service also revokes
+access when the host process dies. If Shizuku itself dies before revocation, the
+local listener is disabled; permission cleanup requires a working privileged connection.
+Tools may briefly report that the listener is connecting during startup.
+
+`notifications_list` reads Android’s active notifications each time and is marked
+read-only. Treat notification text as untrusted app content. Use the returned key,
+action index, and remote input result key; refresh the list before acting because
+notifications can disappear or change. Android may redact sensitive content and
+retain protected notifications after a dismissal request.
+
+Clicks and actions send the original `PendingIntent`. For Activity intents,
+provide a virtual display ID from `displays_list` (or `0` for the main display).
+The existing foreground-app guard applies. Android and app launch modes determine
+final placement; background activity restrictions can still prevent a launch.
+Broadcast and service intents ignore `displayId`. Inline replies require a mutable
+intent and a matching remote input field. Clicks do not explicitly dismiss the
+notification: use `notification_clear` when dismissal is wanted, since Android
+can silently block an Activity launch after accepting its pending intent.
+
+The central gateway exposes the same tools with its usual `deviceId` argument.
 
 ## Protocol
 

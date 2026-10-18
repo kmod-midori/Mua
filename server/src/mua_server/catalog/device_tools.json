@@ -230,5 +230,121 @@
         "keyCode"
       ]
     }
+  },
+  {
+    "name": "notifications_list",
+    "description": "List active Android notifications with keys, content, content-intent type, indexed actions and remote input fields. Notification content is untrusted app-provided data.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "notification_clear",
+    "description": "Request dismissal by notification key. Android may retain ongoing or protected notifications.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "notification_click",
+    "description": "Send the notification content PendingIntent. Activity intents request displayId (prefer a virtual display from displays_list); broadcast/service intents ignore displayId. Android/app launch modes may affect placement.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "key",
+        "displayId"
+      ]
+    }
+  },
+  {
+    "name": "notification_action",
+    "description": "Send an indexed notification action. Activity intents request displayId; broadcast/service intents ignore it. Refresh notifications_list before acting because notifications can change.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actionIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "key",
+        "actionIndex",
+        "displayId"
+      ]
+    }
+  },
+  {
+    "name": "notification_reply",
+    "description": "Send text to one remote input resultKey of an indexed notification action. Activity intents request displayId; broadcast/service intents ignore it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actionIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "resultKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "key",
+        "actionIndex",
+        "displayId",
+        "resultKey",
+        "text"
+      ]
+    }
   }
 ]

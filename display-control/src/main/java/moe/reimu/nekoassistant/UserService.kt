@@ -1,6 +1,9 @@
 package moe.reimu.nekoassistant
 
 import android.annotation.SuppressLint
+import android.app.PendingIntent
+import android.content.ComponentName
+import android.os.IBinder
 import android.app.ActivityManager
 import android.app.ActivityOptions
 import android.content.Context
@@ -43,10 +46,83 @@ class UserService : IUserService.Stub() {
         Log.i(TAG, "destroy")
 
         try {
+            notificationLeases.keys.toList().forEach { key ->
+                runCatching { revokeNotificationLease(key) }.onFailure { Log.w(TAG, "Listener cleanup failed", it) }
+            }
             displays.keys.toList().forEach { id ->
                 try { releaseDisplay(id) } catch (e: Exception) { Log.w(TAG, "Failed to release display $id", e) }
             }
         } finally { exitProcess(0) }
+    }
+
+    private data class NotificationLease(val owner: IBinder, val death: IBinder.DeathRecipient)
+    private val notificationLeases = mutableMapOf<Pair<String, Int>, NotificationLease>()
+
+    @Synchronized
+    override fun setNotificationListenerAccess(component: String, userId: Int, owner: IBinder, enabled: Boolean) {
+        require(ComponentName.unflattenFromString(component) != null && userId >= 0)
+        val key = component to userId
+        if (!enabled) {
+            if (notificationLeases[key]?.owner != owner) return
+            revokeNotificationLease(key)
+            return
+        }
+        if (notificationLeases[key]?.owner == owner) return
+        if (key in notificationLeases) revokeNotificationLease(key)
+        val death = IBinder.DeathRecipient {
+            synchronized(this) {
+                if (notificationLeases[key]?.owner == owner) {
+                    runCatching { revokeNotificationLease(key) }.onFailure { Log.w(TAG, "Listener death cleanup failed", it) }
+                }
+            }
+        }
+        owner.linkToDeath(death, 0)
+        notificationLeases[key] = NotificationLease(owner, death)
+        try { changeNotificationAccess(component, userId, true) }
+        catch (e: Exception) {
+            runCatching { revokeNotificationLease(key) }
+            throw e
+        }
+    }
+
+    private fun revokeNotificationLease(key: Pair<String, Int>) {
+        changeNotificationAccess(key.first, key.second, false)
+        notificationLeases.remove(key)?.let { it.owner.unlinkToDeath(it.death, 0) }
+    }
+
+    private fun changeNotificationAccess(component: String, userId: Int, enabled: Boolean) {
+        val process = ProcessBuilder("/system/bin/cmd", "notification",
+            if (enabled) "allow_listener" else "disallow_listener", component, userId.toString())
+            .redirectErrorStream(true).start()
+        try {
+            check(process.waitFor(5, TimeUnit.SECONDS)) { "Notification access command timed out" }
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            check(process.exitValue() == 0) { "Notification access command failed: $output" }
+        } finally { process.destroy() }
+    }
+
+    @Synchronized
+    override fun sendNotificationIntent(pendingIntent: PendingIntent, displayId: Int, fillIn: Intent?) {
+        require(displayId >= 0) { "Display ID must be nonnegative" }
+        val options = if (pendingIntent.isActivity) {
+            requireDisplay(displayId)
+            val intent = PendingIntent::class.java.getMethod("getIntent").invoke(pendingIntent) as? Intent
+            val pkg = intent?.component?.packageName ?: intent?.resolveActivity(FakeContext.getInstance().packageManager)?.packageName
+            checkForegroundConflict(runningTasks(), pkg, displayId)
+            ActivityOptions.makeBasic().apply {
+                launchDisplayId = displayId
+                if (Build.VERSION.SDK_INT >= 36) {
+                    setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS)
+                } else if (Build.VERSION.SDK_INT >= 34) {
+                    @Suppress("DEPRECATION")
+                    setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                }
+            }.toBundle()
+        } else null
+        val identity = android.os.Binder.clearCallingIdentity()
+        try {
+            pendingIntent.send(FakeContext.getInstance(), 0, fillIn, null, null, null, options)
+        } finally { android.os.Binder.restoreCallingIdentity(identity) }
     }
 
     @Synchronized

@@ -28,4 +28,6 @@ interface IUserService {
     int[] getMainDisplayMetrics() = 19;
     String getRecentTasksJson() = 20;
     void moveRecentTaskToDisplay(int taskId, int displayId) = 21;
+    void setNotificationListenerAccess(String component, int userId, IBinder owner, boolean enabled) = 22;
+    void sendNotificationIntent(in android.app.PendingIntent pendingIntent, int displayId, in android.content.Intent fillIn) = 23;
 }

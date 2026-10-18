@@ -107,6 +107,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         fun getService(): AgentService = this@AgentService
     }
 
+    private val notificationAccess by lazy { moe.reimu.displaycontrol.NotificationAccess(this) }
     private val userServices = MutableStateFlow<IUserService?>(null)
     private var userServiceBinding = false
 
@@ -126,6 +127,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             if (destroying) return
             Log.i(TAG, "UserService onServiceConnected")
             userServices.value = IUserService.Stub.asInterface(p1)
+            notificationAccess.connected(userServices.value)
             stateStore.update { it.copy(isUserServiceConnected = true) }
         }
 
@@ -211,6 +213,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     override fun onDestroy() {
         destroying = true
+        notificationAccess.close()
         super.onDestroy()
 
         Shizuku.removeBinderReceivedListener(this)
@@ -263,6 +266,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     private fun disconnectUserService() {
+        notificationAccess.connected(null)
         userServices.value = null
         userServiceBinding = false
         stateStore.update { it.copy(isUserServiceConnected = false) }
@@ -411,6 +415,18 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         service.startActivity(intent, false)
         intent.component?.packageName?.let { launchedPackages.add(it) }
     }
+
+    fun listNotifications(): String = org.json.JSONObject().apply {
+        put("notifications", org.json.JSONArray(moe.reimu.displaycontrol.AgentNotificationListener.list()))
+        put("displayIds", org.json.JSONArray(userServices.value?.displayIds?.toList().orEmpty()))
+    }.toString()
+
+    fun clickNotification(key: String, displayId: Int): String =
+        moe.reimu.displaycontrol.AgentNotificationListener.click(key, displayId, checkNotNull(userServices.value) { "Shizuku is not connected" })
+
+    fun notificationAction(key: String, actionIndex: Int, displayId: Int, resultKey: String? = null, text: String? = null): String =
+        moe.reimu.displaycontrol.AgentNotificationListener.action(key, actionIndex, displayId,
+            checkNotNull(userServices.value) { "Shizuku is not connected" }, resultKey, text)
 
     fun getBitmap(): Bitmap? = synchronized(imageLock) { capture?.bitmap() }
 

@@ -9,7 +9,7 @@ class ToolCatalogTest {
         .validate(Json.parseToJsonElement(args).jsonObject)
 
     @Test fun requiredArgumentsMatchAdvertisedSchemas() {
-        assertEquals(12, ToolCatalog.specs.size)
+        assertEquals(17, ToolCatalog.specs.size)
         ToolCatalog.specs.forEach { spec ->
             assertEquals(spec.properties.keys, spec.schema().required?.toSet())
             assertEquals(spec.properties, spec.schema().properties)
@@ -85,4 +85,13 @@ class ToolCatalogTest {
         validate("apps_list", """{"extra":"ignored"}""")
     }
 
+    @Test fun notificationControlsValidateKeysActionsAndDisplays() {
+        validate("notifications_list", "{}")
+        validate("notification_clear", """{"key":"test-key"}""")
+        validate("notification_click", """{"key":"test-key","displayId":0}""")
+        validate("notification_reply", """{"key":"test-key","actionIndex":0,"displayId":7,"resultKey":"reply","text":"hello"}""")
+        assertThrows(Exception::class.java) { validate("notification_click", """{"key":"test-key"}""") }
+        assertThrows(Exception::class.java) { validate("notification_action", """{"key":"test-key","actionIndex":-1,"displayId":7}""") }
+        assertThrows(Exception::class.java) { validate("notification_clear", """{"key":""}""") }
+    }
 }

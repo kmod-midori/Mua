@@ -84,6 +84,7 @@ object ToolRegistry {
     private val tools = listOf(
         SearchApp, ListApps, Launch, Tap, Type, Swipe,
         LongPress, DoubleTap, TakeOver, BackTool, Wait, Finish, TermuxShell,
+        NotificationsList, NotificationClear, NotificationClick, NotificationAction, NotificationReply,
     )
     private val toolsByName = tools.associateBy { it.name }
 

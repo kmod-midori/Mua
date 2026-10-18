@@ -99,6 +99,11 @@ def test_auth_and_mcp_discovery(client):
         "tap",
         "swipe",
         "key_press",
+        "notifications_list",
+        "notification_clear",
+        "notification_click",
+        "notification_action",
+        "notification_reply",
     }
     for device, token in [
         ("phone-a", "wrong-secret"),
@@ -330,7 +335,7 @@ def tool_list(client):
 def test_direct_schemas_stay_stable_across_device_connections(client):
     before = tool_list(client)
     tools = {tool["name"]: tool for tool in before}
-    assert len(tools) == 13
+    assert len(tools) == 18
     for name, tool in tools.items():
         if name == "devices_list":
             continue
@@ -380,8 +385,58 @@ def test_read_only_hints(client):
         "recent_tasks_list",
         "focused_app",
         "screenshot",
+        "notifications_list",
     }
     for tool in tool_list(client):
         assert (tool.get("annotations") or {}).get("readOnlyHint", False) == (
             tool["name"] in read_only
         )
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("notifications_list", {}),
+        ("notification_clear", {"key": "fixture-key"}),
+        ("notification_click", {"key": "fixture-key", "displayId": 7}),
+        ("notification_action", {"key": "fixture-key", "actionIndex": 0, "displayId": 7}),
+        (
+            "notification_reply",
+            {
+                "key": "fixture-key",
+                "actionIndex": 1,
+                "displayId": 7,
+                "resultKey": "reply",
+                "text": "测试 reply",
+            },
+        ),
+    ],
+)
+def test_notification_tools_forward_original_arguments(client, name, arguments):
+    with (
+        ThreadPoolExecutor() as pool,
+        client.websocket_connect(
+            "/devices/phone-a/ws", headers={"Authorization": "Bearer shared-secret"}
+        ) as socket,
+    ):
+        socket.send_json(
+            {
+                "type": "hello",
+                "version": 1,
+                "name": "Phone",
+                "tools": [{"name": name, "inputSchema": {"type": "object"}}],
+            }
+        )
+        assert socket.receive_json()["type"] == "ready"
+        result = pool.submit(call, client, name, {"deviceId": "phone-a", **arguments})
+        request = socket.receive_json()
+        assert request["name"] == name
+        assert request["arguments"] == arguments
+        socket.send_json(
+            {
+                "type": "result",
+                "id": request["id"],
+                "result": {"content": [{"type": "text", "text": "fixture result"}]},
+            }
+        )
+        assert result.result(timeout=5)["content"][0]["text"] == "fixture result"

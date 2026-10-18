@@ -10,6 +10,7 @@ import androidx.core.graphics.scale
 import kotlinx.serialization.json.*
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
+import moe.reimu.displaycontrol.AgentNotificationListener
 import moe.reimu.displaycontrol.DisplayCapture
 import moe.reimu.nekoassistant.IUserService
 import java.io.ByteArrayOutputStream
@@ -33,6 +34,26 @@ internal class DisplayTools(
     }
 
     fun execute(name: String, args: JsonObject): CallToolResult {
+        if (name == "notifications_list") return textContent(AgentNotificationListener.list())
+        if (name == "notification_clear") return textContent(AgentNotificationListener.clear(args.getValue("key").jsonPrimitive.content))
+        when (name) {
+            "notification_click", "notification_action", "notification_reply" -> {
+                val service = checkNotNull(remote) { "Shizuku is not connected" }
+                val key = args.getValue("key").jsonPrimitive.content
+                val displayId = args.getValue("displayId").jsonPrimitive.int
+                val result = when (name) {
+                    "notification_click" -> AgentNotificationListener.click(key, displayId, service)
+                    "notification_reply" -> AgentNotificationListener.action(
+                        key, args.getValue("actionIndex").jsonPrimitive.int, displayId, service,
+                        args.getValue("resultKey").jsonPrimitive.content, args.getValue("text").jsonPrimitive.content,
+                    )
+                    else -> AgentNotificationListener.action(
+                        key, args.getValue("actionIndex").jsonPrimitive.int, displayId, service,
+                    )
+                }
+                return textContent(result)
+            }
+        }
         if (name == "apps_list") {
             val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
             val apps = context.packageManager.queryIntentActivities(intent, 0)
