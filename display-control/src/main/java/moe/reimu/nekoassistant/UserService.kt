@@ -102,6 +102,15 @@ class UserService : IUserService.Stub() {
     }
 
     @Synchronized
+    override fun setClipboardText(text: String) {
+        val identity = android.os.Binder.clearCallingIdentity()
+        try {
+            FakeContext.getInstance().getSystemService(android.content.ClipboardManager::class.java)
+                .setPrimaryClip(android.content.ClipData.newPlainText(null, text))
+        } finally { android.os.Binder.restoreCallingIdentity(identity) }
+    }
+
+    @Synchronized
     override fun sendNotificationIntent(pendingIntent: PendingIntent, displayId: Int, fillIn: Intent?) {
         require(displayId >= 0) { "Display ID must be nonnegative" }
         val options = if (pendingIntent.isActivity) {

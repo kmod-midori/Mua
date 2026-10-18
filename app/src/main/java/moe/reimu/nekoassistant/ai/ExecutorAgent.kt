@@ -19,11 +19,11 @@ import moe.reimu.nekoassistant.getSystemPrompt
 import java.time.LocalDate
 
 class ExecutorAgent(
-    private val screenshotWidth: Int,
-    private val screenshotHeight: Int,
+    private val screenshotDimensions: () -> Pair<Int, Int>,
     private val configuration: ActiveLlmConfiguration,
     private val client: OpenAI,
     private val isTermuxAvailable: () -> Boolean = { false },
+    private val displayContext: () -> String = { "" },
     private val onStatus: (InferenceStatus) -> Unit = {},
     private val onStream: (String) -> Unit = {},
 ) {
@@ -33,7 +33,9 @@ class ExecutorAgent(
         currentAppName: String?
     ): AgentResponse? {
         val termuxAvailable = isTermuxAvailable()
+        val (screenshotWidth, screenshotHeight) = screenshotDimensions()
         val textPrompt = buildString {
+            appendLine(displayContext())
             if (!currentAppName.isNullOrBlank()) {
                 appendLine("当前前台应用：$currentAppName")
             }

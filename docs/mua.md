@@ -79,12 +79,16 @@ override is used.
 | `displays_list` | None | Managed display IDs, dimensions, DPI, and system-reported focused packages |
 | `display_stop` | `displayId` | Releases that display and its capture buffers |
 | `apps_list` | None | Launchable packages and labels |
+| `apps_search` | `query` | Installed apps matching label or package |
 | `recent_tasks_list` | None | Current user’s recent tasks with task ID, title, display ID, running state, package, and base/top activities |
 | `recent_task_move` | `taskId`, `displayId` | Requests moving or restoring a recent task onto a virtual display and brings it to the front |
 | `app_launch` | `displayId`, `package` | Launches on the selected display |
 | `focused_app` | `displayId` | System-reported focused package, if any |
 | `screenshot` | `displayId` | PNG image content, longest side capped at 1980 pixels |
 | `tap` | `displayId`, `x`, `y` | Tap at native display coordinates |
+| `long_press` | `displayId`, `x`, `y` | Long press at native display coordinates |
+| `double_tap` | `displayId`, `x`, `y` | Double tap at native display coordinates |
+| `text_input` | `displayId`, `text` | Paste into the focused input; verify the result |
 | `swipe` | `displayId`, `x1`, `y1`, `x2`, `y2`, `durationMs` | Swipe with a nonnegative duration in milliseconds |
 | `key_press` | `displayId`, `keyCode` | Android key event, e.g. BACK=4, HOME=3, ENTER=66 |
 | `notifications_list` | None | Active notification keys, text, content intents, actions, and remote input fields |
@@ -134,6 +138,10 @@ are passed to Android without clipping or rejection. Screenshots own their pixel
 and do not expose a shared mutable
 ImageReader buffer. Before the first frame arrives, screenshot returns a tool
 error; retry.
+
+`text_input` writes the clipboard through Shizuku, then injects the paste key.
+The target input must be focused. Android can block clipboard reads while the
+physical device is locked, even if a virtual display is active; verify the result.
 
 ## Notification access
 

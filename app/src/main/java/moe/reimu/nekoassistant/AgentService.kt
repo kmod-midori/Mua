@@ -36,8 +36,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Deferred
@@ -56,7 +54,7 @@ import moe.reimu.nekoassistant.ai.ChatMessage
 import moe.reimu.nekoassistant.ai.generateConversationTitle
 import moe.reimu.nekoassistant.data.ActiveLlmConfiguration
 import moe.reimu.nekoassistant.data.LlmConfigurationRepository
-import moe.reimu.displaycontrol.DisplayCapture
+import moe.reimu.displaycontrol.*
 import rikka.shizuku.Shizuku
 import java.util.Base64
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -126,7 +124,11 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         override fun onServiceConnected(p0: ComponentName, p1: IBinder) {
             if (destroying) return
             Log.i(TAG, "UserService onServiceConnected")
-            userServices.value = IUserService.Stub.asInterface(p1)
+            val service = IUserService.Stub.asInterface(p1)
+            synchronized(imageLock) {
+                deviceTools.connected(service)
+                userServices.value = service
+            }
             notificationAccess.connected(userServices.value)
             stateStore.update { it.copy(isUserServiceConnected = true) }
         }
@@ -141,14 +143,19 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     private val frameThread = HandlerThread("display-frames").apply { start() }
     private val frameHandler = Handler(frameThread.looper)
 
-    private var capture: DisplayCapture? = null
+    private var agentDisplayId: Int? = null
+    private val deviceTools by lazy {
+        DeviceToolExecutor(applicationContext, onFrameAvailable = {
+            frameHandler.post { synchronized(imageLock) { schedulePreview() } }
+        })
+    }
 
     private val imageLock = Any()
     private var lastPreviewFrameAtMs = 0L
 
     private val renderPreview = Runnable {
         synchronized(imageLock) {
-            if (frames.subscriptionCount.value > 0 && capture != null) {
+            if (frames.subscriptionCount.value > 0 && agentDisplayId != null) {
                 try {
                     // Own the pixels: closing an Image permits its producer to reuse its
                     // buffer even while Compose is still drawing the previous bitmap.
@@ -175,8 +182,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             launchedPackages.clear()
             lastConfirmedApp = null
             frameHandler.removeCallbacks(renderPreview)
-            capture?.close()
-            capture = null
+            agentDisplayId = null
             lastPreviewFrameAtMs = 0L
             frames.value = null
         }
@@ -222,6 +228,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
         currentJob?.cancel()
         releaseCapture()
+        deviceTools.close()
         frameThread.quitSafely()
         stopJobForeground()
         cancelTakeOverNotification()
@@ -267,7 +274,10 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private fun disconnectUserService() {
         notificationAccess.connected(null)
-        userServices.value = null
+        synchronized(imageLock) {
+            userServices.value = null
+            deviceTools.connected(null)
+        }
         userServiceBinding = false
         stateStore.update { it.copy(isUserServiceConnected = false) }
         if (currentJob != null) {
@@ -314,45 +324,12 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     private class UserServiceDisconnected : CancellationException("Shizuku user service disconnected")
 
-    private suspend fun startDisplay(): Boolean {
-        if (displayStarted && userServices.value != null) return true
-        val service = withTimeoutOrNull(10_000) { userServices.filterNotNull().first() }
-            ?: return false
-        val reader = DisplayCapture(displayMetrics.widthPixels, displayMetrics.heightPixels, frameHandler) {
-            synchronized(imageLock) { schedulePreview() }
-        }
-        var started = false
+    fun stopDisplay(): Boolean = synchronized(imageLock) {
+        val id = agentDisplayId ?: return@synchronized false
         try {
-            synchronized(imageLock) {
-                if (destroying || service !== userServices.value) return false
-                capture = reader
-            }
-            if (!service.startDisplay(
-                    displayMetrics.widthPixels, displayMetrics.heightPixels,
-                    displayMetrics.densityDpi, reader.surface,
-            )) return false
-            started = synchronized(imageLock) {
-                if (reader !== capture || service !== userServices.value || destroying) false else {
-                    stateStore.update { it.copy(hasDisplay = true) }
-                    true
-                }
-            }
-            return started
-        } finally {
-            if (!started) {
-                synchronized(imageLock) {
-                    if (capture === reader) releaseCapture() else reader.close()
-                }
-            }
-        }
-    }
-
-    fun stopDisplay(): Boolean {
-        return try {
-            userServices.value?.stopDisplay() ?: false
-        } finally {
-            releaseCapture()
-        }
+            deviceTools.execute(StopDisplay(id))
+            true
+        } finally { releaseCapture() }
     }
 
     fun stopAgent() {
@@ -409,30 +386,53 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
-    suspend fun startActivityRemote(intent: Intent) {
-        check(startDisplay()) { "Failed to start display" }
-        val service = checkNotNull(userServices.value) { "User service is not connected" }
-        service.startActivity(intent, false)
-        intent.component?.packageName?.let { launchedPackages.add(it) }
+    suspend fun executeDeviceCall(call: DeviceToolCall<*, *>): moe.reimu.nekoassistant.ai.ActionResult = withContext(Dispatchers.IO) {
+        val result = synchronized(imageLock) {
+            val result = call.execute(deviceTools)
+            val command = call.command
+            if (command is LaunchApp) launchedPackages.add(command.`package`)
+            if (command is DisplayTarget || command is StartDisplay) {
+                val displays = deviceTools.managedDisplays()
+                val targetId = (command as? DisplayTarget)?.displayId ?: displays.lastOrNull()?.displayId
+                val display = displays.firstOrNull { it.displayId == targetId }
+                if (display != null) {
+                    agentDisplayId = display.displayId
+                    displayMetrics.widthPixels = display.width
+                    displayMetrics.heightPixels = display.height
+                    displayMetrics.densityDpi = display.dpi
+                    screenshotSize = Size(display.width, display.height).scaleToMaxDimension(1024)
+                    stateStore.update { it.copy(hasDisplay = true) }
+                    schedulePreview()
+                } else if (targetId == agentDisplayId) releaseCapture()
+            }
+            result
+        }
+        when (result) {
+            is DeviceToolResult.Text -> moe.reimu.nekoassistant.ai.ActionResult.success(result.text)
+            // captureStep saves and supplies the selected display to both models next iteration.
+            is DeviceToolResult.Image -> moe.reimu.nekoassistant.ai.ActionResult.success(
+                "Screenshot captured; the selected display is shown with the next step."
+            )
+        }
     }
 
-    fun listNotifications(): String = org.json.JSONObject().apply {
-        put("notifications", org.json.JSONArray(moe.reimu.displaycontrol.AgentNotificationListener.list()))
-        put("displayIds", org.json.JSONArray(userServices.value?.displayIds?.toList().orEmpty()))
-    }.toString()
+    private fun deviceDisplayContext(): String = synchronized(imageLock) {
+        agentDisplayId?.let {
+            "当前截图属于 displayId=$it；设备原始尺寸 ${displayMetrics.widthPixels}×${displayMetrics.heightPixels}，" +
+                "截图尺寸 ${screenshotSize.width}×${screenshotSize.height}。输入坐标必须按原始尺寸换算。"
+        } ?: "当前没有选中的虚拟显示器。先调用 displays_list 或 display_start 获取 displayId。"
+    }
 
-    fun clickNotification(key: String, displayId: Int): String =
-        moe.reimu.displaycontrol.AgentNotificationListener.click(key, displayId, checkNotNull(userServices.value) { "Shizuku is not connected" })
+    fun getBitmap(): Bitmap? = synchronized(imageLock) { agentDisplayId?.let(deviceTools::bitmap) }
 
-    fun notificationAction(key: String, actionIndex: Int, displayId: Int, resultKey: String? = null, text: String? = null): String =
-        moe.reimu.displaycontrol.AgentNotificationListener.action(key, actionIndex, displayId,
-            checkNotNull(userServices.value) { "Shizuku is not connected" }, resultKey, text)
-
-    fun getBitmap(): Bitmap? = synchronized(imageLock) { capture?.bitmap() }
+    private fun focusedPackage(): String? = synchronized(imageLock) {
+        if (agentDisplayId == null || userServices.value == null) null
+        else deviceTools.execute(FocusedApp(checkNotNull(agentDisplayId))).takeUnless { it == "No focused package" }
+    }
 
     fun getFocusedAppName(): String? {
         if (!displayStarted) return null
-        val focusedPackageName = userServices.value?.focusedPackageName ?: return null
+        val focusedPackageName = focusedPackage() ?: return null
         confirmAvailableApp(focusedPackageName)
 
         return try {
@@ -462,7 +462,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         if (destroying) return null
         val app = if (displayStarted) {
             try {
-                userServices.value?.focusedPackageName?.let(::confirmAvailableApp) ?: lastConfirmedApp
+                focusedPackage()?.let(::confirmAvailableApp) ?: lastConfirmedApp
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to check the background app", e)
                 lastConfirmedApp
@@ -518,46 +518,6 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         }
     }
 
-    fun mapToScreenCoordinates(x: Float, y: Float): Pair<Float, Float>? {
-        if (x < 0 || x > screenshotSize.width || y < 0 || y > screenshotSize.height) {
-            return null
-        }
-        val screenX = x * (displayMetrics.widthPixels.toFloat() / screenshotSize.width.toFloat())
-        val screenY = y * (displayMetrics.heightPixels.toFloat() / screenshotSize.height.toFloat())
-        Log.i(
-            TAG,
-            "Mapping logical coordinates ($x, $y) to screen coordinates ($screenX, $screenY)"
-        )
-        return Pair(screenX, screenY)
-    }
-
-    fun mapXToScreen(x: Float): Float? {
-        if (x < 0 || x > screenshotSize.width) {
-            return null
-        }
-        return (x * (displayMetrics.widthPixels.toFloat() / screenshotSize.width.toFloat())).coerceIn(
-            0f,
-            displayMetrics.widthPixels.toFloat() - 1.0f
-        )
-    }
-
-    fun mapYToScreen(y: Float): Float? {
-        if (y < 0 || y > screenshotSize.height) {
-            return null
-        }
-        return y * (displayMetrics.heightPixels.toFloat() / screenshotSize.height.toFloat()).coerceIn(
-            0f,
-            displayMetrics.heightPixels.toFloat() - 1.0f
-        )
-    }
-
-    fun injectSwipeEvent(
-        x1: Float, y1: Float, x2: Float, y2: Float, duration: Long
-    ) = userServices.value?.injectSwipeEvent(x1, y1, x2, y2, duration) ?: false
-
-    fun injectTapEvent(x: Float, y: Float) = userServices.value?.injectTapEvent(x, y) ?: false
-    fun injectKeyPressEvent(keyCode: Int) = userServices.value?.injectKeyPressEvent(keyCode) ?: false
-
     private suspend fun persistTranscript(conversationId: String) = transcriptPersistence.withLock {
         // Read inside the lock so a delayed streaming write cannot overwrite a newer step.
         val messages = state.value.messages
@@ -608,11 +568,11 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
             onStream = { stateStore.updateAgentMessage(AgentMessage("Planner", it)) },
         )
         val executorAgent = ExecutorAgent(
-            screenshotSize.width,
-            screenshotSize.height,
+            { screenshotSize.width to screenshotSize.height },
             configuration,
             client,
             isTermuxAvailable = { TermuxCommandRunner.isAvailable(this) },
+            displayContext = ::deviceDisplayContext,
             onStatus = { stateStore.updateInferenceStatus("Executor", it) },
             onStream = { stateStore.updateAgentMessage(AgentMessage("Executor", it)) },
         )

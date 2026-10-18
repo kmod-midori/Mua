@@ -116,7 +116,8 @@
           "maximum": 2147483647
         },
         "package": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -344,6 +345,97 @@
         "displayId",
         "resultKey",
         "text"
+      ]
+    }
+  },
+  {
+    "name": "apps_search",
+    "description": "Search installed apps by label or package name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "text_input",
+    "description": "Paste text into the focused input on displayId via the clipboard. Focus the input first and verify the result. Android may block clipboard reads while the physical device is locked.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "displayId",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "long_press",
+    "description": "Long press at native display coordinates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "displayId",
+        "x",
+        "y"
+      ]
+    }
+  },
+  {
+    "name": "double_tap",
+    "description": "Double tap at native display coordinates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "displayId",
+        "x",
+        "y"
       ]
     }
   }

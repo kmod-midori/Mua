@@ -9,7 +9,7 @@ class ToolCatalogTest {
         .validate(Json.parseToJsonElement(args).jsonObject)
 
     @Test fun requiredArgumentsMatchAdvertisedSchemas() {
-        assertEquals(17, ToolCatalog.specs.size)
+        assertEquals(21, ToolCatalog.specs.size)
         ToolCatalog.specs.forEach { spec ->
             assertEquals(spec.properties.keys, spec.schema().required?.toSet())
             assertEquals(spec.properties, spec.schema().properties)

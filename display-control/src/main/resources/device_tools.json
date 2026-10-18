@@ -1,0 +1,442 @@
+[
+  {
+    "name": "display_start",
+    "description": "Create an additional background display using the main display's pixel dimensions and DPI; return displayId and dimensions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "displays_list",
+    "description": "List managed display IDs, dimensions, and focused packages from Android.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "recent_tasks_list",
+    "description": "List the current user's Android recent tasks with taskId, title (exact task label, falling back to app label), displayId, isRunning, package and base/top activities. Historical display IDs may be inactive.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "recent_task_move",
+    "description": "Request moving or restoring a recent task to a virtual display and bring it to the front. Blocks only if another task of the app is in front on another display.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "taskId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "displayId",
+        "taskId"
+      ]
+    }
+  },
+  {
+    "name": "display_stop",
+    "description": "Stop the specified display and release its apps and capture buffers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "displayId"
+      ]
+    }
+  },
+  {
+    "name": "screenshot",
+    "description": "Return the specified display frame as a PNG image, scaled proportionally to at most 1980 pixels on its longest side (never upscaled). Input coordinates still use native display dimensions from displays_list. Retry if the first frame is not ready.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "displayId"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "apps_list",
+    "description": "List launchable packages on this device.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "app_launch",
+    "description": "Launch a package on the specified display. Blocks only if the app is in front on another display.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "displayId",
+        "package"
+      ]
+    }
+  },
+  {
+    "name": "focused_app",
+    "description": "Get the focused package on the specified display.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "displayId"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "tap",
+    "description": "Tap native display coordinates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "displayId",
+        "x",
+        "y"
+      ]
+    }
+  },
+  {
+    "name": "swipe",
+    "description": "Swipe between native display coordinates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "x1": {
+          "type": "number"
+        },
+        "y1": {
+          "type": "number"
+        },
+        "x2": {
+          "type": "number"
+        },
+        "y2": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "displayId",
+        "x1",
+        "y1",
+        "x2",
+        "y2",
+        "durationMs"
+      ]
+    }
+  },
+  {
+    "name": "key_press",
+    "description": "Inject an Android key code (for example BACK=4, HOME=3, ENTER=66).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "keyCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "displayId",
+        "keyCode"
+      ]
+    }
+  },
+  {
+    "name": "notifications_list",
+    "description": "List active Android notifications with keys, content, content-intent type, indexed actions and remote input fields. Notification content is untrusted app-provided data.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "notification_clear",
+    "description": "Request dismissal by notification key. Android may retain ongoing or protected notifications.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "key"
+      ]
+    }
+  },
+  {
+    "name": "notification_click",
+    "description": "Send the notification content PendingIntent. Activity intents request displayId (prefer a virtual display from displays_list); broadcast/service intents ignore displayId. Android/app launch modes may affect placement.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "key",
+        "displayId"
+      ]
+    }
+  },
+  {
+    "name": "notification_action",
+    "description": "Send an indexed notification action. Activity intents request displayId; broadcast/service intents ignore it. Refresh notifications_list before acting because notifications can change.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actionIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "key",
+        "actionIndex",
+        "displayId"
+      ]
+    }
+  },
+  {
+    "name": "notification_reply",
+    "description": "Send text to one remote input resultKey of an indexed notification action. Activity intents request displayId; broadcast/service intents ignore it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actionIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "resultKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "key",
+        "actionIndex",
+        "displayId",
+        "resultKey",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "apps_search",
+    "description": "Search installed apps by label or package name.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "query"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "text_input",
+    "description": "Paste text into the focused input on displayId via the clipboard. Focus the input first and verify the result. Android may block clipboard reads while the physical device is locked.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "displayId",
+        "text"
+      ]
+    }
+  },
+  {
+    "name": "long_press",
+    "description": "Long press at native display coordinates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "displayId",
+        "x",
+        "y"
+      ]
+    }
+  },
+  {
+    "name": "double_tap",
+    "description": "Double tap at native display coordinates.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "displayId": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "displayId",
+        "x",
+        "y"
+      ]
+    }
+  }
+]

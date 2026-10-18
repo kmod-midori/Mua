@@ -38,7 +38,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    sourceSets.getByName("main").resources.srcDir("../server/src/mua_server/catalog")
     buildFeatures {
         buildConfig = true
         compose = true

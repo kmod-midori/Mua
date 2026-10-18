@@ -11,8 +11,6 @@ import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import moe.reimu.nekoassistant.IUserService
-import org.json.JSONArray
-import org.json.JSONObject
 
 /** System-owned notification snapshots; no persistent notification cache. */
 class AgentNotificationListener : NotificationListenerService() {
@@ -63,49 +61,29 @@ class AgentNotificationListener : NotificationListenerService() {
             return service to checkNotNull(notification) { "Notification no longer exists; refresh notifications_list" }
         }
 
-        fun list(): String = JSONArray(
-            listener().activeNotifications.orEmpty().map(::notificationInfo)
-        ).toString()
-
-        private fun notificationInfo(sbn: StatusBarNotification) = JSONObject().apply {
+        fun list(): List<NotificationInfo> = listener().activeNotifications.orEmpty().map { sbn ->
             val n = sbn.notification
-            put("key", sbn.key)
-            put("package", sbn.packageName)
-            put("id", sbn.id)
-            put("tag", sbn.tag ?: JSONObject.NULL)
-            put("userId", sbn.user.hashCode())
-            put("postTime", sbn.postTime)
-            put("groupKey", sbn.groupKey)
-            put("ongoing", sbn.isOngoing)
-            put("clearable", sbn.isClearable)
-            put("category", n.category ?: JSONObject.NULL)
-            put("title", n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: JSONObject.NULL)
-            put("text", n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: JSONObject.NULL)
-            put("bigText", n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString() ?: JSONObject.NULL)
-            put("textLines", JSONArray(n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty()))
-            put("contentIntent", n.contentIntent?.let(::intentInfo) ?: JSONObject.NULL)
-            put("actions", JSONArray(n.actions.orEmpty().mapIndexed(::actionInfo)))
+            NotificationInfo(
+                key = sbn.key, `package` = sbn.packageName, id = sbn.id, tag = sbn.tag,
+                userId = sbn.user.hashCode(), postTime = sbn.postTime, groupKey = sbn.groupKey,
+                ongoing = sbn.isOngoing, clearable = sbn.isClearable, category = n.category,
+                title = n.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString(),
+                text = n.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString(),
+                bigText = n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString(),
+                textLines = n.extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.map { it.toString() }.orEmpty(),
+                contentIntent = n.contentIntent?.let(::intentInfo),
+                actions = n.actions.orEmpty().mapIndexed { index, action ->
+                    NotificationActionInfo(index, action.title?.toString().orEmpty(), action.actionIntent?.let(::intentInfo),
+                        action.remoteInputs.orEmpty().map { input ->
+                            NotificationInputInfo(input.resultKey, input.label?.toString().orEmpty(),
+                                input.allowFreeFormInput, input.choices?.map { it.toString() }.orEmpty())
+                        })
+                },
+            )
         }
 
-        private fun actionInfo(index: Int, action: Notification.Action) = JSONObject().apply {
-            put("index", index)
-            put("title", action.title?.toString() ?: "")
-            put("intent", action.actionIntent?.let(::intentInfo) ?: JSONObject.NULL)
-            put("remoteInputs", JSONArray(action.remoteInputs.orEmpty().map(::remoteInputInfo)))
-        }
-
-        private fun remoteInputInfo(input: RemoteInput) = JSONObject().apply {
-            put("resultKey", input.resultKey)
-            put("label", input.label?.toString() ?: "")
-            put("allowFreeFormInput", input.allowFreeFormInput)
-            put("choices", JSONArray(input.choices?.map { it.toString() }.orEmpty()))
-        }
-
-        private fun intentInfo(intent: PendingIntent) = JSONObject().apply {
-            put("isActivity", intent.isActivity)
-            put("creatorPackage", intent.creatorPackage ?: JSONObject.NULL)
-            put("immutable", intent.isImmutable)
-        }
+        private fun intentInfo(intent: PendingIntent) =
+            NotificationIntentInfo(intent.isActivity, intent.creatorPackage, intent.isImmutable)
 
         fun clear(key: String): String {
             val (service, _) = find(key)

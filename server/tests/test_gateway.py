@@ -100,10 +100,14 @@ def test_auth_and_mcp_discovery(client):
         "swipe",
         "key_press",
         "notifications_list",
+        "apps_search",
         "notification_clear",
         "notification_click",
         "notification_action",
         "notification_reply",
+        "text_input",
+        "long_press",
+        "double_tap",
     }
     for device, token in [
         ("phone-a", "wrong-secret"),
@@ -335,7 +339,7 @@ def tool_list(client):
 def test_direct_schemas_stay_stable_across_device_connections(client):
     before = tool_list(client)
     tools = {tool["name"]: tool for tool in before}
-    assert len(tools) == 18
+    assert len(tools) == 22
     for name, tool in tools.items():
         if name == "devices_list":
             continue
@@ -386,6 +390,7 @@ def test_read_only_hints(client):
         "focused_app",
         "screenshot",
         "notifications_list",
+        "apps_search",
     }
     for tool in tool_list(client):
         assert (tool.get("annotations") or {}).get("readOnlyHint", False) == (
@@ -440,3 +445,15 @@ def test_notification_tools_forward_original_arguments(client, name, arguments):
             }
         )
         assert result.result(timeout=5)["content"][0]["text"] == "fixture result"
+
+
+def test_catalog_matches_shared_library_export():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    shared = root / "display-control/src/main/resources/device_tools.json"
+    if shared.exists():
+        assert (
+            shared.read_bytes()
+            == (root / "server/src/mua_server/catalog/device_tools.json").read_bytes()
+        ), "Run python scripts/sync-tool-catalog.py"
