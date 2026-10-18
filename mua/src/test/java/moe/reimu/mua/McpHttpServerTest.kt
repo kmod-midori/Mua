@@ -61,7 +61,7 @@ class McpHttpServerTest {
             ToolCatalog.specs.forEach { assertTrue(discovered.second.contains("\"name\":\"${it.name}\"")) }
             val body = discovered.second.let { it.substring(it.indexOf('{'), it.lastIndexOf('}') + 1) }
             val tools = Json.parseToJsonElement(body).jsonObject.getValue("result").jsonObject.getValue("tools").jsonArray
-            val readOnly = setOf("apps_search", "apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot", "notifications_list")
+            val readOnly = setOf("apps_search", "focused_field", "apps_list", "displays_list", "recent_tasks_list", "focused_app", "screenshot", "notifications_list")
             tools.forEach { entry ->
                 val tool = entry.jsonObject
                 val name = tool.getValue("name").jsonPrimitive.content

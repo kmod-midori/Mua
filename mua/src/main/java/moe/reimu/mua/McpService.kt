@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 class McpService : Service() {
     private val worker = Executors.newSingleThreadExecutor()
     private val controlDispatcher = worker.asCoroutineDispatcher()
+    private lateinit var accessibility: moe.reimu.displaycontrol.AccessibilityAccess
     private lateinit var notifications: moe.reimu.displaycontrol.NotificationAccess
     private lateinit var display: DisplayTools
     private lateinit var connection: ShizukuDisplayConnection
@@ -60,11 +61,13 @@ class McpService : Service() {
         remoteStatus = if (centralEnabled) UiText(R.string.connecting) else UiText(R.string.disabled)
         startForeground(1, buildNotification())
         try {
+            accessibility = moe.reimu.displaycontrol.AccessibilityAccess(this)
             notifications = moe.reimu.displaycontrol.NotificationAccess(this)
             display = DisplayTools(applicationContext, ::setDisplayCount)
             getSystemService(android.hardware.display.DisplayManager::class.java)
                 .registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
             connection = ShizukuDisplayConnection(this, BuildConfig.DEBUG, BuildConfig.VERSION_CODE, { remote ->
+                accessibility.connected(remote)
                 notifications.connected(remote)
                 worker.execute {
                     display.connected(remote)
@@ -194,6 +197,7 @@ class McpService : Service() {
 
     override fun onDestroy() {
         destroying = true
+        if (::accessibility.isInitialized) accessibility.close()
         if (::notifications.isInitialized) notifications.close()
         if (previewService === this) previewService = null
         getSystemService(android.hardware.display.DisplayManager::class.java).unregisterDisplayListener(displayListener)

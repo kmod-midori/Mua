@@ -46,8 +46,11 @@ class UserService : IUserService.Stub() {
         Log.i(TAG, "destroy")
 
         try {
+            accessibilityLeases.keys.toList().forEach { key ->
+                runCatching { revokeServiceAccess(accessibilityLeases, key, ::changeAccessibilityAccess) }.onFailure { Log.w(TAG, "Accessibility cleanup failed", it) }
+            }
             notificationLeases.keys.toList().forEach { key ->
-                runCatching { revokeNotificationLease(key) }.onFailure { Log.w(TAG, "Listener cleanup failed", it) }
+                runCatching { revokeServiceAccess(notificationLeases, key, ::changeNotificationAccess) }.onFailure { Log.w(TAG, "Listener cleanup failed", it) }
             }
             displays.keys.toList().forEach { id ->
                 try { releaseDisplay(id) } catch (e: Exception) { Log.w(TAG, "Failed to release display $id", e) }
@@ -55,39 +58,78 @@ class UserService : IUserService.Stub() {
         } finally { exitProcess(0) }
     }
 
-    private data class NotificationLease(val owner: IBinder, val death: IBinder.DeathRecipient)
-    private val notificationLeases = mutableMapOf<Pair<String, Int>, NotificationLease>()
+    private data class ServiceAccessLease(val owner: IBinder, val death: IBinder.DeathRecipient)
+    private val notificationLeases = mutableMapOf<Pair<String, Int>, ServiceAccessLease>()
+    private val accessibilityLeases = mutableMapOf<Pair<String, Int>, ServiceAccessLease>()
 
     @Synchronized
-    override fun setNotificationListenerAccess(component: String, userId: Int, owner: IBinder, enabled: Boolean) {
+    override fun setNotificationListenerAccess(component: String, userId: Int, owner: IBinder, enabled: Boolean) =
+        setServiceAccess(notificationLeases, component, userId, owner, enabled, ::changeNotificationAccess)
+
+    @Synchronized
+    override fun setAccessibilityServiceAccess(component: String, userId: Int, owner: IBinder, enabled: Boolean) =
+        setServiceAccess(accessibilityLeases, component, userId, owner, enabled, ::changeAccessibilityAccess)
+
+    // Called under the UserService monitor, including Binder death callbacks.
+    private fun setServiceAccess(
+        leases: MutableMap<Pair<String, Int>, ServiceAccessLease>,
+        component: String, userId: Int, owner: IBinder, enabled: Boolean,
+        change: (String, Int, Boolean) -> Unit,
+    ) {
         require(ComponentName.unflattenFromString(component) != null && userId >= 0)
         val key = component to userId
         if (!enabled) {
-            if (notificationLeases[key]?.owner != owner) return
-            revokeNotificationLease(key)
+            if (leases[key]?.owner == owner) revokeServiceAccess(leases, key, change)
             return
         }
-        if (notificationLeases[key]?.owner == owner) return
-        if (key in notificationLeases) revokeNotificationLease(key)
+        if (leases[key]?.owner == owner) return
+        if (key in leases) revokeServiceAccess(leases, key, change)
         val death = IBinder.DeathRecipient {
             synchronized(this) {
-                if (notificationLeases[key]?.owner == owner) {
-                    runCatching { revokeNotificationLease(key) }.onFailure { Log.w(TAG, "Listener death cleanup failed", it) }
+                if (leases[key]?.owner == owner) {
+                    runCatching { revokeServiceAccess(leases, key, change) }
+                        .onFailure { Log.w(TAG, "Service access owner cleanup failed", it) }
                 }
             }
         }
         owner.linkToDeath(death, 0)
-        notificationLeases[key] = NotificationLease(owner, death)
-        try { changeNotificationAccess(component, userId, true) }
+        leases[key] = ServiceAccessLease(owner, death)
+        try { change(component, userId, true) }
         catch (e: Exception) {
-            runCatching { revokeNotificationLease(key) }
+            runCatching { revokeServiceAccess(leases, key, change) }
             throw e
         }
     }
 
-    private fun revokeNotificationLease(key: Pair<String, Int>) {
-        changeNotificationAccess(key.first, key.second, false)
-        notificationLeases.remove(key)?.let { it.owner.unlinkToDeath(it.death, 0) }
+    private fun revokeServiceAccess(
+        leases: MutableMap<Pair<String, Int>, ServiceAccessLease>,
+        key: Pair<String, Int>, change: (String, Int, Boolean) -> Unit,
+    ) {
+        change(key.first, key.second, false)
+        leases.remove(key)?.let { it.owner.unlinkToDeath(it.death, 0) }
+    }
+
+    private fun changeAccessibilityAccess(component: String, userId: Int, enabled: Boolean) {
+        val identity = android.os.Binder.clearCallingIdentity()
+        try {
+            val resolver = FakeContext.getInstance().contentResolver
+            val secure = android.provider.Settings.Secure::class.java
+            val get = secure.getMethod("getStringForUser", android.content.ContentResolver::class.java,
+                String::class.java, Int::class.javaPrimitiveType)
+            val put = secure.getMethod("putStringForUser", android.content.ContentResolver::class.java,
+                String::class.java, String::class.java, Int::class.javaPrimitiveType)
+            fun write(key: String, value: String) {
+                check(put.invoke(null, resolver, key, value, userId) == true) { "Could not update accessibility settings" }
+            }
+            val services = (get.invoke(null, resolver, "enabled_accessibility_services", userId) as? String)
+                .orEmpty().split(':').filter { it.isNotEmpty() }.toMutableSet()
+            // Merge only our component so other accessibility services remain enabled.
+            val target = ComponentName.unflattenFromString(component)
+            services.removeAll { ComponentName.unflattenFromString(it) == target }
+            if (enabled) services.add(component)
+            write("enabled_accessibility_services", services.joinToString(":"))
+            if (enabled || services.isEmpty()) write("accessibility_enabled", if (enabled) "1" else "0")
+        } finally { android.os.Binder.restoreCallingIdentity(identity) }
     }
 
     private fun changeNotificationAccess(component: String, userId: Int, enabled: Boolean) {
@@ -99,15 +141,6 @@ class UserService : IUserService.Stub() {
             val output = process.inputStream.bufferedReader().use { it.readText() }
             check(process.exitValue() == 0) { "Notification access command failed: $output" }
         } finally { process.destroy() }
-    }
-
-    @Synchronized
-    override fun setClipboardText(text: String) {
-        val identity = android.os.Binder.clearCallingIdentity()
-        try {
-            FakeContext.getInstance().getSystemService(android.content.ClipboardManager::class.java)
-                .setPrimaryClip(android.content.ClipData.newPlainText(null, text))
-        } finally { android.os.Binder.restoreCallingIdentity(identity) }
     }
 
     @Synchronized

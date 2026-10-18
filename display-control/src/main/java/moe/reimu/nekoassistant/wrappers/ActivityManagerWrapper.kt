@@ -87,7 +87,7 @@ class ActivityManagerWrapper(private val manager: IInterface) {
                 arrayOf(name, FakeContext.ROOT_UID, token)
             }
             // ContentProviderHolder providerHolder = getContentProviderExternal(...);
-            val providerHolder: Any = method.invoke(manager, args) ?: return null
+            val providerHolder: Any = method.invoke(manager, *args) ?: return null
             // IContentProvider provider = providerHolder.provider;
             val providerField = providerHolder.javaClass.getDeclaredField("provider")
             providerField.isAccessible = true

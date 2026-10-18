@@ -88,7 +88,8 @@ override is used.
 | `tap` | `displayId`, `x`, `y` | Tap at native display coordinates |
 | `long_press` | `displayId`, `x`, `y` | Long press at native display coordinates |
 | `double_tap` | `displayId`, `x`, `y` | Double tap at native display coordinates |
-| `text_input` | `displayId`, `text` | Paste into the focused input; verify the result |
+| `focused_field` | `displayId` | Focused node bounds and editing state, without field contents |
+| `text_input` | `displayId`, `text` | Replace the focused editable field’s contents using accessibility |
 | `swipe` | `displayId`, `x1`, `y1`, `x2`, `y2`, `durationMs` | Swipe with a nonnegative duration in milliseconds |
 | `key_press` | `displayId`, `keyCode` | Android key event, e.g. BACK=4, HOME=3, ENTER=66 |
 | `notifications_list` | None | Active notification keys, text, content intents, actions, and remote input fields |
@@ -139,9 +140,12 @@ and do not expose a shared mutable
 ImageReader buffer. Before the first frame arrives, screenshot returns a tool
 error; retry.
 
-`text_input` writes the clipboard through Shizuku, then injects the paste key.
-The target input must be focused. Android can block clipboard reads while the
-physical device is locked, even if a virtual display is active; verify the result.
+`text_input` replaces the entire contents of the focused editable field on the
+specified display with accessibility `ACTION_SET_TEXT`. It supports Unicode while
+the phone is locked without using the clipboard or switching keyboards. Fields
+must expose an editable accessibility node and support the action. Accessibility
+access is enabled through Shizuku while the agent/MCP service runs and revoked
+when it stops or its host process dies; other accessibility services are preserved.
 
 ## Notification access
 

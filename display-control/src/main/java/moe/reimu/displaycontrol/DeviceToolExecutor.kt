@@ -34,6 +34,7 @@ class DeviceToolExecutor(
     }
 
     private val dispatcher = DeviceToolDispatcher(
+        handle<FocusedField, FocusedFieldResult> { AgentTextAccessibilityService.focusedField(it.displayId) },
         handle<StartDisplay, DisplayInfo>(displayOperation { service, _ -> startDisplay(service) }),
         handle<ListDisplays, List<DisplayInfo>>(displayOperation { service, _ -> listDisplays(service) }),
         handle<StopDisplay, String>(displayOperation { service, args ->
@@ -81,12 +82,10 @@ class DeviceToolExecutor(
             AgentNotificationListener.action(it.key, it.actionIndex, it.displayId, service(), it.resultKey, it.text)
         },
         handle<SearchApps, List<AppInfo>> { searchApps(it.query) },
-        handle<InputText, String>(displayOperation { service, args ->
-            service.setClipboardText(args.text)
-            android.os.SystemClock.sleep(200)
-            check(service.injectKeyOnDisplay(args.displayId, android.view.KeyEvent.KEYCODE_PASTE)) { "Paste failed" }
-            "Text input requested; verify that the intended field was focused"
-        }),
+        handle<InputText, String> { args ->
+            AgentTextAccessibilityService.setText(args.displayId, args.text)
+            "Text replaced in the focused field"
+        },
         handle<LongPress, String>(displayOperation { service, args ->
             check(service.injectSwipeOnDisplay(args.displayId, args.x, args.y, args.x, args.y, 950)) { "Long press failed" }
             "OK"

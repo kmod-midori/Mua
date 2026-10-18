@@ -105,7 +105,8 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
         fun getService(): AgentService = this@AgentService
     }
 
-    private val notificationAccess by lazy { moe.reimu.displaycontrol.NotificationAccess(this) }
+    private val accessibilityAccess by lazy { AccessibilityAccess(this) }
+    private val notificationAccess by lazy { NotificationAccess(this) }
     private val userServices = MutableStateFlow<IUserService?>(null)
     private var userServiceBinding = false
 
@@ -129,6 +130,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
                 deviceTools.connected(service)
                 userServices.value = service
             }
+            accessibilityAccess.connected(userServices.value)
             notificationAccess.connected(userServices.value)
             stateStore.update { it.copy(isUserServiceConnected = true) }
         }
@@ -219,6 +221,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
 
     override fun onDestroy() {
         destroying = true
+        accessibilityAccess.close()
         notificationAccess.close()
         super.onDestroy()
 
@@ -273,6 +276,7 @@ class AgentService : LifecycleService(), Shizuku.OnBinderReceivedListener,
     }
 
     private fun disconnectUserService() {
+        accessibilityAccess.connected(null)
         notificationAccess.connected(null)
         synchronized(imageLock) {
             userServices.value = null

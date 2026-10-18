@@ -101,6 +101,7 @@ def test_auth_and_mcp_discovery(client):
         "key_press",
         "notifications_list",
         "apps_search",
+        "focused_field",
         "notification_clear",
         "notification_click",
         "notification_action",
@@ -339,7 +340,7 @@ def tool_list(client):
 def test_direct_schemas_stay_stable_across_device_connections(client):
     before = tool_list(client)
     tools = {tool["name"]: tool for tool in before}
-    assert len(tools) == 22
+    assert len(tools) == 23
     for name, tool in tools.items():
         if name == "devices_list":
             continue
@@ -391,6 +392,7 @@ def test_read_only_hints(client):
         "screenshot",
         "notifications_list",
         "apps_search",
+        "focused_field",
     }
     for tool in tool_list(client):
         assert (tool.get("annotations") or {}).get("readOnlyHint", False) == (

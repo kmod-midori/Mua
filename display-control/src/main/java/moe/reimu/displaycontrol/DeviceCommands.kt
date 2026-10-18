@@ -49,3 +49,20 @@ interface DisplayTarget { val displayId: Int }
 @Serializable data class NotificationIntentInfo(val isActivity: Boolean, val creatorPackage: String?, val immutable: Boolean)
 @Serializable data class NotificationActionInfo(val index: Int, val title: String, val intent: NotificationIntentInfo?, val remoteInputs: List<NotificationInputInfo>)
 @Serializable data class NotificationInputInfo(val resultKey: String, val label: String, val allowFreeFormInput: Boolean, val choices: List<String>)
+
+@Serializable
+data class FocusedField(override val displayId: Int) : DeviceCommand<FocusedFieldResult>, DisplayTarget
+
+@Serializable
+data class FocusedFieldResult(val displayId: Int, val field: FocusedFieldInfo?)
+
+@Serializable
+data class FieldBounds(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
+@Serializable
+data class FocusedFieldInfo(
+    val packageName: String?, val className: String?, val resourceId: String?,
+    val bounds: FieldBounds, val focused: Boolean, val editable: Boolean,
+    val enabled: Boolean, val visibleToUser: Boolean, val password: Boolean,
+    val supportsSetText: Boolean,
+)
