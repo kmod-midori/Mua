@@ -1,6 +1,6 @@
 services:
   mua:
-    image: ghcr.io/kmod-midori/nekoassistant/mua-server:latest
+    image: ghcr.io/kmod-midori/mua/mua-server:latest
     restart: unless-stopped
     env_file: .env
     environment:
