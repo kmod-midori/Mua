@@ -5,8 +5,8 @@ off. Requires Android 12+, [Shizuku](https://shizuku.rikka.app/), and an MCP cli
 
 ## Quick start
 
-1. Build with `./gradlew :mua:assembleDebug` and install
-   `mua/build/outputs/apk/debug/mua-debug.apk`.
+1. Build with `./gradlew :mua:assembleFossDebug` and install
+   `mua/build/outputs/apk/foss/debug/mua-foss-debug.apk`.
 2. Open **mua** and grant Shizuku permission.
 3. Select `0.0.0.0` for access from another device, then tap **Start mua**.
 4. Copy the endpoint URL and **Authorization** value from **MCP server** into
@@ -14,6 +14,8 @@ off. Requires Android 12+, [Shizuku](https://shizuku.rikka.app/), and an MCP cli
 
 For screen-off use, follow the battery optimization setup in the app.
 
+- [Building and self-hosting](../docs/building-and-self-hosting.md)
 - [Configuration and MCP tools](../docs/mua.md)
 - [Central server setup](../docs/mua-remote.md)
+- [FCM wake-up setup](../docs/mua-fcm.md)
 - [Build and development](../docs/development.md)

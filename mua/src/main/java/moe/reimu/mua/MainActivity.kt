@@ -245,7 +245,7 @@ class MainActivity : ComponentActivity() {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(value = remoteConfig.serverUrl,
                                 onValueChange = { updateRemote(remoteConfig.copy(serverUrl = it)) },
-                                label = { Text(getString(R.string.server_url)) }, placeholder = { Text("wss://mua.example.com") },
+                                label = { Text(getString(R.string.server_url)) }, placeholder = { Text("https://mua.example.com") },
                                 enabled = !running, singleLine = true, modifier = Modifier.fillMaxWidth())
                             OutlinedTextField(value = remoteConfig.deviceName,
                                 onValueChange = { updateRemote(remoteConfig.copy(deviceName = it)) },
@@ -269,6 +269,7 @@ class MainActivity : ComponentActivity() {
                             remoteError?.let { Text(it.resolve(this@MainActivity), color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall) }
                         }
+                        PushSettings()
                     }
                 }
                 if (!batteryExempt) item {

@@ -1,21 +1,24 @@
 # Build and validation
 
+For end-to-end setup, see [Building and self-hosting Mua](building-and-self-hosting.md).
+
 Run commands from the repository root.
 
 ```sh
 ./gradlew :app:assembleDebug :mua:assembleDebug
-./gradlew :app:testDebugUnitTest :mua:testDebugUnitTest :display-control:testDebugUnitTest
-./gradlew :display-control:lintDebug :mua:lintDebug
+./gradlew :app:testDebugUnitTest :mua:test :display-control:testDebugUnitTest
+./gradlew :display-control:lintDebug :mua:lint
 ```
 
-Debug APKs are written to each application module’s `build/outputs/apk/debug/`
-directory. The mua JVM tests cover tool validation, listener configuration, MCP
+Debug APKs are written to `app/build/outputs/apk/debug/` and
+`mua/build/outputs/apk/{foss,google}/debug/`. Building both Mua variants
+requires [Firebase configuration](mua-fcm.md#firebase-configuration); use
+`:mua:assembleFossDebug` to build without it. The mua JVM tests cover tool validation, listener configuration, MCP
 transport behavior, authorization rotation, and custom Host/Origin acceptance.
 
 ## Release signing
 
-Both Android apps read the root `signing.properties` file, using the same format
-as ANCSReceiver:
+Both Android apps read the root `signing.properties` file:
 
 ```properties
 KEYSTORE_FILE=../keystore.jks
@@ -32,8 +35,8 @@ and `keystore.jks` are ignored by Git. Keep signing credentials private.
 ./gradlew :app:assembleRelease :mua:assembleRelease
 ```
 
-Signed APKs are written to each application module’s `build/outputs/apk/release/`
-directory. Debug builds do not require release credentials.
+Signed APKs are written to `app/build/outputs/apk/release/` and
+`mua/build/outputs/apk/{foss,google}/release/`. Debug builds do not require release credentials.
 
 ## Device checks
 
@@ -69,8 +72,9 @@ Android APIs, display rendering, input routing, or system power behavior.
 ## GitHub Actions
 
 Branch pushes, except those changing only Markdown (`*.md`) files, run
-`.github/workflows/debug.yml`: both Android debug APKs are
-uploaded as workflow artifacts, JVM tests run, and the server is tested, linted,
+`.github/workflows/debug.yml`: Neko Assistant and Google-free Mua debug APKs
+are built and tested, with FCM Mua included when Firebase configuration is
+available. APKs are uploaded as workflow artifacts. The server is tested, linted,
 and built as a container without publishing.
 
 Push a release tag to run its corresponding workflow in `.github/workflows/`:
@@ -80,7 +84,7 @@ only accepts its own tag prefix; tag pushes do not run the debug workflow.
 | Tag | Published output |
 | --- | --- |
 | `na-1.2.3` | Signed Neko Assistant APK attached to a draft GitHub release |
-| `mua-1.2.3` | Signed mua APK attached to a draft GitHub release |
+| `mua-1.2.3` | Signed `foss` APK and, when configured, `google` APK attached to a draft GitHub release |
 | `mua-server-1.2.3` | `ghcr.io/<owner>/<repository>/mua-server:1.2.3` and a draft GitHub release linking the image |
 
 Versions must have three numeric components. Only the selected component is
@@ -103,5 +107,5 @@ Signing files are restored only for the release job and removed afterward.
 Debug builds and server releases do not need signing secrets. GHCR publishing
 uses the built-in `GITHUB_TOKEN` with `packages: write`; no registry password is
 needed. The workflows create draft GitHub releases with `contents: write`; publish them
-manually after review. Container images are still pushed to GHCR automatically. Package
+manually after review. Container images are pushed to GHCR automatically. Package
 visibility is configured separately in GitHub's package settings.

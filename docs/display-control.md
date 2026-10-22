@@ -48,7 +48,7 @@ outside capture locks and should schedule work rather than block.
 Call `connected(null)` on disconnect and `close()` when the host service stops.
 Closing releases managed displays and capture resources. Close the Shizuku
 connection as well to remove the remote process and local binding callbacks.
-The privileged service still serializes display/input operations at the Binder
+The privileged service serializes display/input operations at the Binder
 boundary. It queries Android tasks for app placement; only capture resources are
 tracked locally.
 
@@ -58,8 +58,9 @@ No agent, UI, MCP, database, or LLM dependency is included in this library.
 Use `getDisplayIds()` and the display-ID input, launch, and focus methods for
 multiple displays; release each with `releaseDisplay(id)`. The host tracks capture
 resources, while the privileged service queries Android tasks for app placement.
-The original transactions 1–9 retain the legacy default-display API for Binder
-compatibility. Both apps now use explicit display IDs through the shared executor. New methods use separate transaction codes; do not renumber either set.
+Transactions 1–9 provide the default-display API for Binder compatibility. Both
+apps use explicit display IDs through the shared executor. Display-ID methods
+use separate transaction codes; do not renumber either set.
 
 `getRecentTasksJson()` queries Android’s current-user recent tasks without storing
 a local task registry. `moveRecentTaskToDisplay(taskId, displayId)` uses

@@ -26,6 +26,7 @@ internal class McpHttpServer(
     port: Int = 8765,
     address: String = "127.0.0.1",
     private val tokenProvider: () -> String = { token },
+    private val onCall: () -> Unit = {},
     private val execute: suspend (String, JsonObject) -> CallToolResult,
 ) {
     init {
@@ -59,6 +60,8 @@ internal class McpHttpServer(
             if (!MessageDigest.isEqual(supplied.toByteArray(), "Bearer ${tokenProvider()}".toByteArray())) {
                 call.respond(HttpStatusCode.Unauthorized)
                 finish()
+            } else if (call.request.local.uri.substringBefore('?') == "/mcp") {
+                onCall()
             }
         }
         mcpStatelessStreamableHttp(

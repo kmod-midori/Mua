@@ -19,14 +19,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-android
-      - name: Build and test
-        run: ./gradlew :app:assembleDebug :mua:assembleDebug :app:testDebugUnitTest :mua:testDebugUnitTest :display-control:testDebugUnitTest
+      - name: Restore Firebase configuration when available
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.MUA_GOOGLE_SERVICES_JSON }}
+        shell: bash
+        run: |
+          if [[ -n "$GOOGLE_SERVICES_JSON" ]]; then
+            umask 077
+            printf '%s\n' "$GOOGLE_SERVICES_JSON" > mua/src/google/google-services.json
+          fi
+      - name: Build and test available variants
+        run: ./gradlew :app:assembleDebug :mua:assembleDebug :app:testDebugUnitTest :mua:test :display-control:testDebugUnitTest
       - uses: actions/upload-artifact@v7
         with:
           name: android-debug-${{ github.sha }}
           path: |
             app/build/outputs/apk/debug/*.apk
-            mua/build/outputs/apk/debug/*.apk
+            mua/build/outputs/apk/*/debug/*.apk
           if-no-files-found: error
 
   server:

@@ -16,8 +16,9 @@ class McpHttpServerTest {
 
     private fun verifyTransport(address: String) {
         val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val activity = java.util.concurrent.atomic.AtomicInteger()
         val token = java.util.concurrent.atomic.AtomicReference("test-token")
-        val server = McpHttpServer("test-token", 0, address, tokenProvider = { token.get() }) { name, _ ->
+        val server = McpHttpServer("test-token", 0, address, tokenProvider = { token.get() }, onCall = { activity.incrementAndGet() }) { name, _ ->
             calls.add(name)
             if (name == "clipboard_get" || name == "clipboard_set") error("Android blocked clipboard access")
             if (name == "screenshot") error("Shizuku disconnected")
@@ -47,7 +48,10 @@ class McpHttpServerTest {
                     response.substringBefore("\r\n").split(" ")[1].toInt() to response.substringAfter("\r\n\r\n")
                 }
             }
+            assertEquals(401, call(token = "wrong").first)
+            assertEquals(0, activity.get())
             assertEquals(200, call(host = "custom.example").first)
+            assertEquals(1, activity.get())
             assertEquals(200, call(origin = "http://$connectHost:${server.listeningPort}").first)
             assertEquals(401, call(token = "wrong").first)
             assertEquals(200, call(origin = "https://custom.example").first)

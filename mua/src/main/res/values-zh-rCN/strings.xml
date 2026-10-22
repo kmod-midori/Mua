@@ -49,7 +49,7 @@
     <string name="stop">停止</string>
     <string name="connections_disabled">连接已停用</string>
     <string name="no_displays">无活动虚拟显示屏</string>
-    <string name="invalid_url">请输入 ws:// 或 wss:// 服务器地址</string>
+    <string name="invalid_url">请输入 http:// 或 https:// 服务器地址</string>
     <string name="invalid_name">请输入设备名称</string>
     <string name="invalid_device_id">请输入不含斜杠的设备 ID</string>
     <string name="invalid_token">请输入设备令牌</string>

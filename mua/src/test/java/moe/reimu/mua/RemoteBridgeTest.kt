@@ -21,6 +21,7 @@ class RemoteBridgeTest {
     @Test fun registersValidatesRelaysImagesAndReconnects() = runBlocking {
         val completed = CompletableDeferred<Unit>()
         val reconnected = CompletableDeferred<Unit>()
+        val activity = java.util.concurrent.atomic.AtomicInteger()
         val calls = CopyOnWriteArrayList<String>()
         var connections = 0
         val server = embeddedServer(CIO, host = "127.0.0.1", port = 0) {
@@ -69,7 +70,7 @@ class RemoteBridgeTest {
             }
         }.start(wait = false)
         val port = server.engine.resolvedConnectors().single().port
-        val bridge = RemoteBridge(RemoteConfig(true, "ws://127.0.0.1:$port", "phone", "device-secret", "Test phone"), { println("Bridge status: $it") }) { name, _ ->
+        val bridge = RemoteBridge(RemoteConfig(true, "http://127.0.0.1:$port", "phone", "device-secret", "Test phone"), { println("Bridge status: $it") }, onCall = { activity.incrementAndGet() }) { name, _ ->
             calls.add(name)
             if (name == "screenshot") CallToolResult(content = listOf(ImageContent("cG5n", "image/png")))
             else textContent("OK")
@@ -78,6 +79,7 @@ class RemoteBridgeTest {
             bridge.start()
             withTimeout(10000) { completed.await(); reconnected.await() }
             assertEquals(listOf("tap", "screenshot"), calls.toList())
+            assertEquals(3, activity.get()) // Includes invalid calls, excludes registration/reconnects.
         } finally {
             bridge.close()
             server.stop(0, 1000)

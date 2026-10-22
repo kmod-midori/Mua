@@ -1,0 +1,7 @@
+<resources>
+    <string name="fcm_wake">Wake via FCM</string>
+    <string name="fcm_description">FCM-started sessions stop after 10 idle minutes.</string>
+    <string name="fcm_initialization_failed">Firebase could not be initialized.</string>
+    <string name="fcm_token_failed">Could not fetch token. Check Google Play services and your connection.</string>
+    <string name="fcm_copy_token">Copy FCM token</string>
+</resources>

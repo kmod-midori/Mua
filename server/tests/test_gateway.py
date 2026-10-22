@@ -10,8 +10,10 @@ from mua_server.app import Device, Registry, Settings, create_app
 
 
 @pytest.fixture
-def client():
-    with TestClient(create_app(Settings("client-secret", "shared-secret"))) as client:
+def client(tmp_path):
+    with TestClient(
+        create_app(Settings("client-secret", "shared-secret", str(tmp_path)))
+    ) as client:
         yield client
 
 

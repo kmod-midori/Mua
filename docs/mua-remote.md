@@ -1,5 +1,7 @@
 # Central mua gateway
 
+For end-to-end setup, see [Building and self-hosting Mua](building-and-self-hosting.md).
+
 The optional central path runs alongside the existing local MCP server:
 
 ```text
@@ -39,19 +41,24 @@ Environment changes take effect when the server restarts.
 Start the server:
 
 ```sh
-uv run --env-file .env python -m mua_server --host 0.0.0.0 --port 8000
+./start.sh --host 0.0.0.0 --port 8000
 ```
 
 The default bind address is `127.0.0.1`; specify `0.0.0.0` to accept remote
 connections. Run **one process/worker**: the live connection registry and pending
 requests are held in memory. Multiple independent workers or replicas require
 shared routing infrastructure and are not supported by this implementation.
-There is no database or stored screenshot/task history.
+Device metadata and FCM registrations persist in SQLite at `server/data/mua.sqlite3`
+when running from the source checkout. `start.sh` sets the database and environment
+file paths relative to `server/`, independent of the working directory. Live sockets and pending calls remain in memory;
+there is no stored screenshot/task history. Protect and back up the database,
+including its WAL during online backups, as it contains device push tokens.
 
 For internet use, terminate TLS at a reverse proxy and forward both `/mcp` and
-`/devices/{deviceId}/ws` to this process, with WebSocket upgrades enabled.
-Use HTTPS for MCP and WSS on the phone. `ws://` and HTTP are available for local
-network development and do not encrypt credentials or content. The launcher
+`/devices/{deviceId}/ws` and `/devices/{deviceId}/push` to this process, with WebSocket upgrades enabled.
+Use HTTPS for MCP and the phone’s server URL; Mua derives WSS internally.
+HTTP (using WS internally) is available for local network development and does
+not encrypt credentials or content. The launcher
 allows full WebSocket messages without Uvicorn's default message-size limit so
 PNG results fit; reverse-proxy limits must also accommodate images. MCP uses the
 SDK's default request-body limit. Host and Origin headers are not allowlisted;
@@ -63,7 +70,7 @@ Build using `server/` as the Docker context:
 
 ```sh
 docker build -t mua-server ./server
-docker run --rm --name mua-server --env-file server/.env -p 8000:8000 mua-server
+docker run --rm --name mua-server --env-file server/.env -v mua-data:/data -p 8000:8000 mua-server
 ```
 
 For Docker's `--env-file`, use unquoted `KEY=value` lines for `MUA_CLIENT_TOKEN`
@@ -76,14 +83,17 @@ The entrypoint runs one worker on `0.0.0.0:8000`. To override its port, append
 `--host 0.0.0.0 --port 9000` and publish `-p 9000:9000`. When a reverse proxy runs
 on the host, publish `-p 127.0.0.1:8000:8000` and use the TLS configuration above.
 `docker stop mua-server` sends the shutdown signal directly to the Python process.
-No persistent volume is required; devices reconnect after the container restarts.
+Mount a persistent volume at `/data` to retain device registrations across
+container replacement. The image sets `MUA_DATA_DIR=/data`;
+a bind-mounted directory must be writable by UID 10001. Devices reconnect after
+restart, while offline devices and their FCM registration remain discoverable.
 
 ## Mobile setup
 
 1. Stop mua before editing connection settings or toggles.
 2. Leave **MCP server** enabled if you also want local access; it is optional.
-3. Enter the base URL, such as `wss://mua.example.com` or
-   `ws://192.168.1.10:8000`. A path prefix is supported when the proxy preserves
+3. Enter the base URL, such as `https://mua.example.com` or
+   `http://192.168.1.10:8000`. A path prefix is supported when the proxy preserves
    the corresponding routing. Do not include `/mcp` or the device WebSocket path.
 4. Enter a **Device name** to identify this phone in `devices_list` (initially
    its model name). **Device ID** defaults to Android ID; keep it or choose a unique one.
@@ -147,15 +157,18 @@ screenshot request is:
 ```
 
 The tool catalog stays stable even when no devices are connected. `devices_list`
-returns current device IDs, configured names, and connection times. An offline
-device or an operation absent from that device's advertised capabilities returns
+returns known device IDs, configured names, online state, connection/last-seen times,
+and whether an FCM token is registered. Offline records survive server restarts. With server FCM configured, a call to an offline registered device triggers a
+push and waits up to 30 seconds for reconnection. Concurrent calls share the wake
+attempt. Without FCM configuration, or if wake-up fails, the call returns a tool
+error. An operation absent from the connected device's capabilities also returns
 a tool error. The gateway removes only `deviceId` before forwarding arguments and
 preserves the original result, including image content and tool errors.
 
 Android and the gateway share `server/src/mua_server/catalog/device_tools.json`.
 Gradle packages this file as an Android Java resource; the Python package loads
 it as package data and adds the required `deviceId` parameter. Update this shared
-catalog when changing device tools. Device registration still advertises its
+catalog when changing device tools. Device registration advertises its
 supported tools so older app versions can report unsupported operations clearly.
 
 Display IDs are local to each device. All existing local tool behavior applies,
@@ -175,7 +188,7 @@ new tool-execution deadline or replay interrupted requests.
 ```sh
 uv run --directory server pytest
 uv run --directory server ruff check src tests
-./gradlew :mua:testDebugUnitTest :mua:assembleDebug :mua:lintDebug
+./gradlew :mua:test :mua:assembleDebug :mua:lint
 ```
 
 Gateway tests exercise authenticated MCP requests, shared-device authentication,
@@ -186,3 +199,5 @@ display remains available locally and remotely, then release it.
 
 Implementation references: [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk),
 [Ktor client WebSockets](https://ktor.io/docs/client-websockets.html).
+
+For automatic FCM registration and refresh, see [FCM setup](mua-fcm.md).

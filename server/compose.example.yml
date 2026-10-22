@@ -1,0 +1,24 @@
+services:
+  mua:
+    image: ghcr.io/kmod-midori/nekoassistant/mua-server:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MUA_DATA_DIR: /data
+      # Optional FCM: uncomment this and the credential mount below.
+      # GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-service-account.json
+    ports:
+      # For a reverse proxy on the host. Use "8000:8000" for direct LAN access.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - mua-data:/data
+      # The file must exist and be readable by UID 10001.
+      # - type: bind
+      #   source: ./firebase-service-account.json
+      #   target: /run/secrets/firebase-service-account.json
+      #   read_only: true
+      #   bind:
+      #     create_host_path: false
+
+volumes:
+  mua-data:

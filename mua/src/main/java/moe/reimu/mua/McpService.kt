@@ -19,6 +19,8 @@ import java.util.Base64
 import java.util.concurrent.Executors
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
 
 class McpService : Service() {
     private val worker = Executors.newSingleThreadExecutor()
@@ -30,6 +32,27 @@ class McpService : Service() {
     private var server: McpHttpServer? = null
     private var bridge: RemoteBridge? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val idle = IdleTimeout { android.os.SystemClock.elapsedRealtime() }
+    private val checkIdle = object : Runnable {
+        override fun run() {
+            if (destroying || !idle.automatic) return
+            if (idle.claimExpiration()) {
+                stopSelf()
+            } else {
+                mainHandler.postDelayed(this, idle.remainingMillis().coerceAtLeast(1))
+            }
+        }
+    }
+    private fun recordCall() { idle.touch() }
+    private suspend fun executeTool(name: String, args: JsonObject): CallToolResult {
+        idle.beginCall()
+        try {
+            return withContext(controlDispatcher) {
+                check(!destroying) { "Mua is stopping" }
+                display.execute(name, args)
+            }
+        } finally { idle.endCall() }
+    }
     private var centralEnabled = false
     private var cpuWakeLock: PowerManager.WakeLock? = null
     private lateinit var notificationBuilder: Notification.Builder
@@ -77,8 +100,10 @@ class McpService : Service() {
             status = UiText(R.string.shizuku_waiting)
             connection.start()
             startTransports()
+            PushRegistration.schedule(this)
             running = true
             previewService = this
+            idle.touch()
         } catch (e: Exception) {
             destroying = true
             android.util.Log.e("MuaMcp", "Server startup failed", e)
@@ -89,6 +114,9 @@ class McpService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == "stop") stopSelf() else if (!destroying) {
+            idle.start(fromFcm = intent?.action == ACTION_FCM_WAKE)
+            mainHandler.removeCallbacks(checkIdle)
+            if (idle.automatic) mainHandler.postDelayed(checkIdle, IdleTimeout.TIMEOUT_MILLIS)
             connection.connect()
         }
         return START_NOT_STICKY
@@ -103,12 +131,7 @@ class McpService : Service() {
             var candidate: McpHttpServer? = null
             try {
                 candidate = McpHttpServer(accessToken(this), listener.port, listener.address,
-                    tokenProvider = { accessToken(this) }) { name, args ->
-                    withContext(controlDispatcher) {
-                        check(!destroying) { "Mua is stopping" }
-                        display.execute(name, args)
-                    }
-                }
+                    tokenProvider = { accessToken(this) }, onCall = ::recordCall, execute = ::executeTool)
                 candidate.start()
                 server = candidate
                 localStatus = UiText(R.string.listening, listOf(listener.address, listener.port))
@@ -134,12 +157,7 @@ class McpService : Service() {
                             updateNotification()
                         }
                     }
-                }) { name, args ->
-                    withContext(controlDispatcher) {
-                        check(!destroying) { "Mua is stopping" }
-                        display.execute(name, args)
-                    }
-                }
+                }, onCall = ::recordCall, execute = ::executeTool)
                 candidate.start()
                 bridge = candidate
             } catch (e: Exception) {
@@ -197,6 +215,7 @@ class McpService : Service() {
 
     override fun onDestroy() {
         destroying = true
+        mainHandler.removeCallbacksAndMessages(null)
         if (::accessibility.isInitialized) accessibility.close()
         if (::notifications.isInitialized) notifications.close()
         if (previewService === this) previewService = null
@@ -228,6 +247,7 @@ class McpService : Service() {
     }
 
     companion object {
+        const val ACTION_FCM_WAKE = "moe.reimu.mua.FCM_WAKE"
         // Accessed only from main; capture work stays on the serialized control executor.
         private var previewService: McpService? = null
         internal fun requestPreviews(callback: (List<DisplayPreview>) -> Unit) {

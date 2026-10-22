@@ -1,8 +1,11 @@
+import com.google.gms.googleservices.GoogleServicesPlugin
+import com.google.gms.googleservices.GoogleServicesTask
 import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    id("com.google.gms.google-services") version "4.4.4"
 }
 
 android {
@@ -14,6 +17,11 @@ android {
         targetSdk = 37
         versionCode = 3
         versionName = "1.0.1"
+    }
+    flavorDimensions += "push"
+    productFlavors {
+        create("foss") { dimension = "push" }
+        create("google") { dimension = "push" }
     }
     signingConfigs {
         create("release") {
@@ -51,6 +59,9 @@ android {
 }
 
 dependencies {
+    "googleImplementation"(platform("com.google.firebase:firebase-bom:34.19.0"))
+    "googleImplementation"("com.google.firebase:firebase-messaging")
+    "googleImplementation"("androidx.work:work-runtime-ktx:2.11.2")
     implementation(project(":display-control"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
@@ -69,4 +80,21 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.websockets)
+}
+
+// Only create FCM variants with configuration in a location supported by the plugin.
+androidComponents {
+    beforeVariants(selector().withFlavor("push" to "google")) { variant ->
+        variant.enable = GoogleServicesPlugin.getJsonFiles(
+            variant.buildType.orEmpty(),
+            variant.productFlavors.map { it.second },
+            projectDir,
+        ).any { it.isFile }
+    }
+    onVariants(selector().withFlavor("push" to "foss")) { variant ->
+        val variantName = variant.name.replaceFirstChar { it.uppercaseChar() }
+        tasks.named<GoogleServicesTask>("process${variantName}GoogleServices") {
+            enabled = false
+        }
+    }
 }

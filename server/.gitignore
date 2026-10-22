@@ -4,3 +4,6 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .env
+/data/
+
+/firebase-service-account.json

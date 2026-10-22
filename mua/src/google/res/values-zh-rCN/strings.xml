@@ -1,0 +1,7 @@
+<resources>
+    <string name="fcm_wake">通过 FCM 唤醒</string>
+    <string name="fcm_description">FCM 唤醒后，闲置 10 分钟自动停止。</string>
+    <string name="fcm_initialization_failed">无法初始化 Firebase。</string>
+    <string name="fcm_token_failed">无法获取令牌，请检查 Google Play 服务和网络。</string>
+    <string name="fcm_copy_token">复制 FCM 令牌</string>
+</resources>

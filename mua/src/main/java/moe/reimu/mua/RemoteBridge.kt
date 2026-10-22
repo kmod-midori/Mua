@@ -17,6 +17,7 @@ import kotlinx.serialization.json.*
 internal class RemoteBridge(
     private val config: RemoteConfig,
     private val status: (UiText) -> Unit,
+    private val onCall: () -> Unit = {},
     private val execute: suspend (String, JsonObject) -> CallToolResult,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -62,6 +63,7 @@ internal class RemoteBridge(
                             val request = Json.parseToJsonElement(frame.readText()).jsonObject
                             check(request["type"]?.jsonPrimitive?.content == "call") { "Expected call" }
                             val id = request.getValue("id").jsonPrimitive.content
+                            onCall()
                             val result = try {
                                 val name = request.getValue("name").jsonPrimitive.content
                                 val args = request.getValue("arguments").jsonObject

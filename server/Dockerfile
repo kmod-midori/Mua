@@ -17,10 +17,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.14-slim-bookworm AS runtime
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    MUA_DATA_DIR=/data
 WORKDIR /app
 RUN groupadd --gid 10001 mua \
-    && useradd --uid 10001 --gid mua --create-home mua
+    && useradd --uid 10001 --gid mua --create-home mua \
+    && mkdir /data && chown mua:mua /data
 COPY --from=builder /app/.venv /app/.venv
 USER mua
 EXPOSE 8000

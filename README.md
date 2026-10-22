@@ -16,8 +16,8 @@ You need Android 12 or newer, a running [Shizuku](https://shizuku.rikka.app/)
 installation authorized through ADB or root, and an MCP client supporting
 Streamable HTTP.
 
-1. Build with `./gradlew :mua:assembleDebug` and install
-   `mua/build/outputs/apk/debug/mua-debug.apk`.
+1. Build with `./gradlew :mua:assembleFossDebug` and install
+   `mua/build/outputs/apk/foss/debug/mua-foss-debug.apk`.
 2. Open **mua** and grant Shizuku permission. Select `0.0.0.0` as the listening
    address to connect from another device on your network, then tap **Start mua**.
 3. Copy the endpoint URL and **Authorization** value from **MCP server**
@@ -33,7 +33,8 @@ move**, over mobile data or Wi-Fi. Your phone connects to the server, so your
 agent doesn’t need to be on the same network. You can connect multiple devices
 through one MCP endpoint.
 
-See [central server setup](docs/mua-remote.md) to get started.
+Follow the [building and self-hosting guide](docs/building-and-self-hosting.md)
+for Android builds, server deployment, and optional FCM wake-up.
 
 ## Project modules
 

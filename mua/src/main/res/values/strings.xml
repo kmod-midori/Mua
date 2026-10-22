@@ -49,7 +49,7 @@
     <string name="stop">Stop</string>
     <string name="connections_disabled">Connections disabled</string>
     <string name="no_displays">No active virtual displays</string>
-    <string name="invalid_url">Enter a ws:// or wss:// server URL</string>
+    <string name="invalid_url">Enter an http:// or https:// server URL</string>
     <string name="invalid_name">Enter a device name</string>
     <string name="invalid_device_id">Enter a device ID without slashes</string>
     <string name="invalid_token">Enter the device token</string>

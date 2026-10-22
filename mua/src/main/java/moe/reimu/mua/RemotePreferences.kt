@@ -13,11 +13,19 @@ internal fun Context.loadRemoteConfig(): RemoteConfig {
     ).orEmpty().also {
         prefs.edit { putString("deviceId", it) }
     }
-    return RemoteConfig(prefs.getBoolean("enabled", false), prefs.getString("url", "")!!,
+    val storedUrl = prefs.getString("url", "").orEmpty()
+    val serverUrl = when {
+        storedUrl.startsWith("wss:") -> "https:" + storedUrl.removePrefix("wss:")
+        storedUrl.startsWith("ws:") -> "http:" + storedUrl.removePrefix("ws:")
+        else -> storedUrl
+    }
+    if (serverUrl != storedUrl) prefs.edit { putString("url", serverUrl) }
+    return RemoteConfig(prefs.getBoolean("enabled", false), serverUrl,
         id, prefs.getString("token", "")!!, prefs.getString("name", android.os.Build.MODEL)!!)
 }
 
 internal fun Context.saveRemoteConfig(config: RemoteConfig) {
+    val previous = loadRemoteConfig()
     getSharedPreferences("remote", Context.MODE_PRIVATE).edit {
         putBoolean("enabled", config.enabled)
         putString("url", config.serverUrl)
@@ -25,4 +33,8 @@ internal fun Context.saveRemoteConfig(config: RemoteConfig) {
         putString("token", config.token)
         putString("name", config.deviceName)
     }
+    if (previous.serverUrl != config.serverUrl || previous.deviceId != config.deviceId) {
+        PushRegistration.schedule(this, previous)
+    }
+    PushRegistration.schedule(this, config)
 }

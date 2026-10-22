@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version
 from importlib.resources import files
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -21,21 +22,38 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from mua_server.push import FcmSender, WakeCoordinator
+from mua_server.storage import DeviceStore
+
 
 @dataclass(frozen=True)
 class Settings:
     client_token: str
     device_token: str
+    data_dir: str
+    firebase_project_id: str = ""
 
     def __post_init__(self):
         if not isinstance(self.client_token, str) or not self.client_token.strip():
             raise ValueError("MUA_CLIENT_TOKEN must be nonempty")
         if not isinstance(self.device_token, str) or not self.device_token.strip():
             raise ValueError("MUA_DEVICE_TOKEN must be nonempty")
+        if not isinstance(self.data_dir, str) or not self.data_dir.strip():
+            raise ValueError("MUA_DATA_DIR must be nonempty")
 
     @classmethod
     def from_env(cls):
-        return cls(os.environ["MUA_CLIENT_TOKEN"], os.environ["MUA_DEVICE_TOKEN"])
+        return cls(
+            os.environ["MUA_CLIENT_TOKEN"],
+            os.environ["MUA_DEVICE_TOKEN"],
+            os.environ["MUA_DATA_DIR"],
+            os.environ.get("MUA_FIREBASE_PROJECT_ID", ""),
+        )
+
+
+class PushRegistration(BaseModel):
+    name: str = Field(min_length=1, max_length=256)
+    token: str | None = Field(min_length=1, max_length=4096, pattern=r"^\S+$")
 
 
 class Hello(BaseModel):
@@ -98,6 +116,7 @@ class Device:
 class Registry:
     def __init__(self):
         self.devices: dict[str, Device] = {}
+        self.changed = asyncio.Condition()
 
     def get(self, device_id: str) -> Device:
         device = self.devices.get(device_id)
@@ -114,6 +133,16 @@ class Registry:
                 await previous.socket.close(code=1012, reason="Connection replaced")
             except (RuntimeError, OSError):
                 pass  # The old socket may have closed before its receive loop detached it.
+
+        async with self.changed:
+            self.changed.notify_all()
+
+    async def wait_online(self, device_id: str):
+        async with self.changed:
+            await self.changed.wait_for(
+                lambda: device_id in self.devices and self.devices[device_id].online
+            )
+            return self.get(device_id)
 
     def detach(self, device: Device):
         device.disconnect()
@@ -140,6 +169,8 @@ def text_result(value) -> types.CallToolResult:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     registry = Registry()
+    store = DeviceStore(str(Path(settings.data_dir) / "mua.sqlite3"))
+    wake = WakeCoordinator(registry, store)
     mcp = Server("mua-central", version=version("mua-server"))
     catalog = json.loads(files("mua_server").joinpath("catalog/device_tools.json").read_text())
     device_tools = {}
@@ -157,7 +188,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return [
             types.Tool(
                 name="devices_list",
-                description="List currently connected mua devices.",
+                description="List known mua devices, including offline devices and wake-up registration status.",
                 annotations=types.ToolAnnotations(readOnlyHint=True),
                 inputSchema={"type": "object", "properties": {}},
             ),
@@ -167,16 +198,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @mcp.call_tool()
     async def call_tool(name: str, arguments: dict):
         if name == "devices_list":
+            rows = await asyncio.to_thread(store.list_devices)
             return text_result(
                 [
-                    {"deviceId": d.id, "name": d.name, "connectedAt": d.connected_at}
-                    for d in registry.devices.values()
-                    if d.online
+                    {
+                        "deviceId": row["device_id"],
+                        "name": row["name"],
+                        "online": row["device_id"] in registry.devices,
+                        "connectedAt": registry.devices[row["device_id"]].connected_at
+                        if row["device_id"] in registry.devices
+                        else None,
+                        "lastSeenAt": row["last_seen_at"],
+                        "wakeEnabled": row["fcm_token"] is not None,
+                    }
+                    for row in rows
                 ]
             )
         if name not in device_tools:
             raise ValueError(f"Unknown tool: {name}")
-        device = registry.get(arguments["deviceId"])
+        device = await wake.get_device(arguments["deviceId"])
         return await device.call(
             name, {key: value for key, value in arguments.items() if key != "deviceId"}
         )
@@ -190,18 +230,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app):
+        await asyncio.to_thread(store.initialize)
+        if settings.firebase_project_id or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            wake.sender = await asyncio.to_thread(FcmSender, settings.firebase_project_id)
         async with manager.run():
             try:
                 yield
             finally:
-                await registry.close()
+                try:
+                    await wake.close()
+                finally:
+                    await registry.close()
 
     app = FastAPI(title="mua central server", version=version("mua-server"), lifespan=lifespan)
     app.state.registry = registry
+    app.state.store = store
+    app.state.wake = wake
 
     @app.middleware("http")
     async def client_auth(request, call_next):
-        if not authorized(request.headers.get("authorization"), settings.client_token):
+        route_path = request.scope["path"].removeprefix(request.scope.get("root_path", ""))
+        token = (
+            settings.device_token if route_path.startswith("/devices/") else settings.client_token
+        )
+        if not authorized(request.headers.get("authorization"), token):
             return JSONResponse(
                 {"detail": "Unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"}
             )
@@ -218,6 +270,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Route("/mcp", endpoint=McpEndpoint(), methods=["GET", "POST", "DELETE"])
     )
 
+    @app.put("/devices/{device_id}/push")
+    def register_push(device_id: str, registration: PushRegistration):
+        if not device_id.strip() or len(device_id) > 256:
+            raise HTTPException(422, "Invalid device ID")
+        store.register_push(device_id, registration.name, registration.token)
+        return {"registered": registration.token is not None}
+
     @app.websocket("/devices/{device_id}/ws")
     async def device_socket(socket: WebSocket, device_id: str):
         if not authorized(socket.headers.get("authorization"), settings.device_token):
@@ -231,6 +290,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ValueError("Unsupported protocol")
             if len({tool.name for tool in hello.tools}) != len(hello.tools):
                 raise ValueError("Duplicate tool names")
+            await asyncio.to_thread(store.seen, device_id, hello.name)
             device = Device(device_id, hello.name, hello.tools, socket)
             # Publish registration and acknowledge it before any concurrent MCP call is sent.
             async with device.send_lock:
